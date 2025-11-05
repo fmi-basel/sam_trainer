@@ -2,7 +2,7 @@
 authors = ["Niklas Khoss <niklas.khoss@fmi.ch>"]
 channels = ["conda-forge"]
 name = "sam_trainer"
-platforms = ["win-64"]
+platforms = ["win-64", "linux-64"]
 version = "0.1.0"
 
 [tasks]
