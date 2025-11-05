@@ -1,0 +1,26 @@
+[workspace]
+authors = ["Niklas Khoss <niklas.khoss@fmi.ch>"]
+channels = ["conda-forge"]
+name = "sam_trainer"
+platforms = ["win-64"]
+version = "0.1.0"
+
+[tasks]
+train = "python -m sam_trainer.cli train"
+augment = "python -m sam_trainer.cli augment"
+config = "python -m sam_trainer.cli config"
+
+[dependencies]
+python = ">=3.10"
+micro_sam = ">=1.6.2,<2"
+pydantic = ">=2.0"
+typer = ">=0.12.0"
+pyyaml = ">=6.0"
+zarr = ">=2.0"
+ome-zarr = ">=0.9.0"
+tifffile = ">=2024.0.0"
+h5py = ">=3.0"
+numpy = ">=1.24"
+scikit-image = ">=0.22"
+albumentations = ">=1.4.0"
+rich = ">=13.0"
