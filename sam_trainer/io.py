@@ -61,7 +61,10 @@ def read_image(path: Path, key: Optional[str] = None) -> np.ndarray:
 
 def _read_ome_zarr(path: Path) -> np.ndarray:
     """Read OME-Zarr format (directory-based)."""
-    reader = Reader(parse_url(str(path)))
+    zarr_location = parse_url(str(path))
+    if zarr_location is None:
+        raise ValueError(f"Failed to parse OME-Zarr location: {path}")
+    reader = Reader(zarr_location)
 
     # Get the first (highest resolution) image
     nodes = list(reader())
@@ -145,7 +148,10 @@ def _write_ome_zarr(data: np.ndarray, path: Path) -> None:
     from ome_zarr.writer import write_image as ome_write
 
     path.mkdir(parents=True, exist_ok=True)
-    store = parse_url(str(path), mode="w").store
+    zarr_location = parse_url(str(path), mode="w")
+    if zarr_location is None or not hasattr(zarr_location, "store"):
+        raise ValueError(f"Failed to parse OME-Zarr location for writing: {path}")
+    store = zarr_location.store
 
     # Write with default chunks and no pyramid for simplicity
     ome_write(

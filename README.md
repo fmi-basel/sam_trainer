@@ -82,6 +82,12 @@ The script automatically:
 
 ### Augmentation Only
 
+- 90-degree rotations
+- Horizontal/vertical flips
+- Gaussian blur (range 3-11 pixels)
+- Multiplicative noise (±5% intensity variation)
+- Very subtle brightness (±5%) and contrast (±2%)
+
 Run data augmentation without training:
 
 ```bash
@@ -186,7 +192,7 @@ training:
 
 ### For Non-Zarr Formats
 
-```
+```text
 data/
 ├── images/
 │   ├── img001.tif
@@ -200,7 +206,7 @@ data/
 
 ### For OME-Zarr
 
-```
+```text
 data/
 ├── images/
 │   ├── img001.zarr/
@@ -216,7 +222,7 @@ data/
 
 After training, your experiment directory will look like:
 
-```
+```text
 runs/
 └── my_experiment/
     ├── config.yaml                    # Copy of configuration
@@ -295,19 +301,24 @@ pixi run config -o test_config.yaml
 
 ## Project Structure
 
-```
+```text
 sam_trainer/
-├── sam_trainer/          # Main package
+├── sam_trainer/              # Main package
 │   ├── __init__.py
-│   ├── config.py         # Pydantic schemas
-│   ├── io.py             # Multi-format I/O
-│   ├── augmentation.py   # Data augmentation
-│   ├── training.py       # Training logic
-│   └── cli.py            # CLI commands
+│   ├── config.py             # Pydantic schemas
+│   ├── io.py                 # Multi-format I/O
+│   ├── augmentation.py       # Data augmentation
+│   ├── training.py           # Training logic
+│   └── cli.py                # CLI commands
 ├── scripts/
-│   └── submit_training.sh  # SLURM batch script
-├── runs/                 # Training outputs
-└── pixi.toml             # Environment definition
+│   └── submit_training.sh    # SLURM batch script
+├── dat/                      # Local data directory (gitignored)
+├── runs/                     # Training outputs (gitignored)
+├── pixi.toml                 # Environment definition
+├── pixi.lock                 # Locked dependencies
+├── example_config.yaml       # Example configuration
+├── .gitignore                # Git ignore rules
+└── README.md                 # This file
 ```
 
 ## Contributing

@@ -2,7 +2,9 @@
 
 import logging
 from pathlib import Path
+from typing import Literal
 
+import click
 import typer
 import yaml
 from rich.console import Console
@@ -66,7 +68,7 @@ def config(
         aug_output = Path(typer.prompt("Output directory for augmented data"))
         aug_format = typer.prompt(
             "Output format",
-            type=typer.Choice(["ome-zarr", "tif", "hdf5"]),
+            type=click.Choice(["ome-zarr", "tif", "hdf5"]),
             default="ome-zarr",
         )
         n_aug = typer.prompt("Number of augmentations per image", type=int, default=3)
@@ -82,20 +84,19 @@ def config(
     # Training
     console.print("\n[bold]Training Configuration[/bold]")
 
-    if do_augmentation:
+    if do_augmentation and aug_config is not None:
         train_images = aug_config.output_dir / "images"
         train_labels = aug_config.output_dir / "labels"
-        console.print(f"[dim]Using augmented data: {train_images}[/dim]")
     else:
         train_images = Path(typer.prompt("Training images directory"))
         train_labels = Path(typer.prompt("Training labels directory"))
 
     model_type = typer.prompt(
         "Model type",
-        default="vit_b_lm",
-        type=typer.Choice(
+        type=click.Choice(
             ["vit_t", "vit_b", "vit_l", "vit_h", "vit_t_lm", "vit_b_lm", "vit_l_lm"]
         ),
+        default="vit_b_lm",
     )
 
     patch_h = typer.prompt("Patch height", type=int, default=512)
@@ -230,7 +231,7 @@ def augment(
     n_augmentations: int = typer.Option(
         3, "--n-aug", "-n", help="Number of augmentations per image"
     ),
-    output_format: str = typer.Option(
+    output_format: Literal["ome-zarr", "tif", "hdf5", "original"] = typer.Option(
         "original",
         "--format",
         "-f",
