@@ -1,0 +1,16 @@
+experiment_name: "training_only"
+output_base_dir: "runs"
+augmentation: null
+training:
+  images_dir: "dat/training_data/images"
+  labels_dir: "dat/training_data/labels"
+  model_type: "vit_b_lm"
+  patch_shape: [512, 512]
+  batch_size: 2
+  n_epochs: 100
+  n_samples: null
+  learning_rate: 1.0e-05
+  val_split: 0.1
+  checkpoint_name: "sam_test"
+  resume_from_checkpoint: null
+  export_path: null

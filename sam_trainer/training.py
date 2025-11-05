@@ -71,6 +71,18 @@ def run_training(config: TrainingConfig, output_dir: Path) -> dict[str, Path]:
     logger.info(f"Patch shape: {config.patch_shape}")
     logger.info(f"Batch size: {config.batch_size}")
 
+    # Validate data directories exist before starting
+    if not config.images_dir.exists():
+        raise FileNotFoundError(
+            f"Images directory does not exist: {config.images_dir}\n"
+            "If using augmentation, make sure the augmentation step completed successfully."
+        )
+    if not config.labels_dir.exists():
+        raise FileNotFoundError(
+            f"Labels directory does not exist: {config.labels_dir}\n"
+            "If using augmentation, make sure the augmentation step completed successfully."
+        )
+
     # Check for GPU
     device = "cuda" if torch.cuda.is_available() else "cpu"
     logger.info(f"Using device: {device}")
@@ -95,7 +107,7 @@ def run_training(config: TrainingConfig, output_dir: Path) -> dict[str, Path]:
         with_segmentation_decoder=True,
         train_instance_segmentation_only=True,
         is_train=True,
-        n_samples=None,  # Use all available samples
+        n_samples=config.n_samples,  # Number of patches per image per epoch
     )
 
     val_loader = default_sam_loader(
@@ -108,7 +120,7 @@ def run_training(config: TrainingConfig, output_dir: Path) -> dict[str, Path]:
         with_segmentation_decoder=True,
         train_instance_segmentation_only=True,
         is_train=False,
-        n_samples=None,
+        n_samples=config.n_samples,  # Number of patches per image per epoch
     )
 
     logger.info(f"Train batches: {len(train_loader)}, Val batches: {len(val_loader)}")
@@ -124,7 +136,7 @@ def run_training(config: TrainingConfig, output_dir: Path) -> dict[str, Path]:
         "train_loader": train_loader,
         "val_loader": val_loader,
         "n_epochs": config.n_epochs,
-        "learning_rate": config.learning_rate,
+        "lr": config.learning_rate,  # micro-SAM uses 'lr' not 'learning_rate'
         "save_root": str(checkpoint_dir.parent),  # Parent of checkpoint_name
     }
 

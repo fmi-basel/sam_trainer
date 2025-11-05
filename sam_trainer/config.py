@@ -16,6 +16,10 @@ class AugmentationConfig(BaseModel):
         default="original",
         description="Output format for augmented data (original=preserve input format)",
     )
+    include_original: bool = Field(
+        default=True,
+        description="If True, save original images alongside augmented versions",
+    )
 
     # Augmentation parameters
     n_augmentations: int = Field(
@@ -73,6 +77,11 @@ class TrainingConfig(BaseModel):
     )
     batch_size: int = Field(default=1, ge=1, description="Training batch size")
     n_epochs: int = Field(default=100, ge=1, description="Number of training epochs")
+    n_samples: Optional[int] = Field(
+        default=None,
+        ge=1,
+        description="Number of random patches per image per epoch (None=auto, typically 16)",
+    )
     learning_rate: float = Field(default=1e-5, gt=0, description="Learning rate")
     val_split: float = Field(
         default=0.1, gt=0, lt=1, description="Validation split ratio"
@@ -92,8 +101,9 @@ class TrainingConfig(BaseModel):
     @field_validator("images_dir", "labels_dir")
     @classmethod
     def validate_data_dirs_exist(cls, v: Path) -> Path:
-        if not v.exists():
-            raise ValueError(f"Directory does not exist: {v}")
+        # Don't validate existence during config creation
+        # Directories might be created by augmentation step before training
+        # Validation will happen when training actually starts
         return v
 
     @field_validator("resume_from_checkpoint")

@@ -268,11 +268,12 @@ def run_augmentation(config: AugmentationConfig) -> dict[str, int]:
         else:
             output_fmt = config.output_format
 
-        # Save original
+        # Save original (if requested)
         base_name = img_path.stem
-        write_image(image, output_images_dir / f"{base_name}_orig", output_fmt)
-        write_image(label, output_labels_dir / f"{base_name}_orig", output_fmt)
-        total_generated += 1
+        if config.include_original:
+            write_image(image, output_images_dir / f"{base_name}_orig", output_fmt)
+            write_image(label, output_labels_dir / f"{base_name}_orig", output_fmt)
+            total_generated += 1
 
         # Generate augmentations
         if pipeline is not None and config.n_augmentations > 0:
