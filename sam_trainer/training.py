@@ -97,6 +97,7 @@ def run_training(config: TrainingConfig, output_dir: Path) -> dict[str, Path]:
 
     # Create data loaders
     logger.info("Creating data loaders...")
+    logger.info(f"Using {config.num_workers} dataloader workers")
     train_loader = default_sam_loader(
         raw_paths=[str(p) for p in train_images],
         label_paths=[str(p) for p in train_labels],
@@ -108,6 +109,7 @@ def run_training(config: TrainingConfig, output_dir: Path) -> dict[str, Path]:
         train_instance_segmentation_only=True,
         is_train=True,
         n_samples=config.n_samples,  # Number of patches per image per epoch
+        num_workers=config.num_workers,  # Parallel data loading
     )
 
     val_loader = default_sam_loader(
@@ -121,6 +123,7 @@ def run_training(config: TrainingConfig, output_dir: Path) -> dict[str, Path]:
         train_instance_segmentation_only=True,
         is_train=False,
         n_samples=config.n_samples,  # Number of patches per image per epoch
+        num_workers=config.num_workers,  # Parallel data loading
     )
 
     logger.info(f"Train batches: {len(train_loader)}, Val batches: {len(val_loader)}")

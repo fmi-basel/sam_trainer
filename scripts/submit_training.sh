@@ -9,7 +9,7 @@
 #SBATCH --mem=40G
 #SBATCH --gres=gpu:1
 #SBATCH --constraint="infiniband&gpuram48gb"
-#SBATCH --time=48:00:00
+#SBATCH --time=08:00:00
 # Write logs into logs/<job-name>-<jobid>.out|.err under the working directory
 # NOTE: the directory is created below before running
 #SBATCH --output=logs/%x-%j.out
