@@ -126,8 +126,9 @@ def run_training(config: TrainingConfig, output_dir: Path) -> dict[str, Path]:
     logger.info(f"Train batches: {len(train_loader)}, Val batches: {len(val_loader)}")
 
     # Set up checkpoint directory
+    # Note: micro-SAM's train_instance_segmentation will create checkpoints/<name>/
+    # under save_root, so we pass the experiment dir directly
     checkpoint_dir = output_dir / "checkpoints" / config.checkpoint_name
-    checkpoint_dir.mkdir(parents=True, exist_ok=True)
 
     # Training arguments
     train_kwargs = {
@@ -137,7 +138,7 @@ def run_training(config: TrainingConfig, output_dir: Path) -> dict[str, Path]:
         "val_loader": val_loader,
         "n_epochs": config.n_epochs,
         "lr": config.learning_rate,  # micro-SAM uses 'lr' not 'learning_rate'
-        "save_root": str(checkpoint_dir.parent),  # Parent of checkpoint_name
+        "save_root": str(output_dir),  # micro-SAM will add checkpoints/<name> itself
     }
 
     # Add checkpoint resume if specified
