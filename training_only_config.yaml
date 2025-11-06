@@ -1,16 +1,16 @@
-experiment_name: "training_only"
+experiment_name: "training_original_images"
 output_base_dir: "runs"
 augmentation: null
 training:
-  images_dir: "dat/training_data/images"
-  labels_dir: "dat/training_data/labels"
+  images_dir: "dat/train_orig_40/images"
+  labels_dir: "dat/train_orig_40/labels"
   model_type: "vit_b_lm"
   patch_shape: [512, 512]
   batch_size: 2
-  n_epochs: 100
+  n_epochs: 50
   n_samples: null
   learning_rate: 1.0e-05
   val_split: 0.1
-  checkpoint_name: "sam_test"
+  checkpoint_name: "training_original_40_images"
   resume_from_checkpoint: null
   export_path: null
