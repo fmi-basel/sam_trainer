@@ -24,3 +24,22 @@ numpy = ">=1.24"
 scikit-image = ">=0.22"
 albumentations = ">=1.4.0"
 rich = ">=13.0"
+
+# Optional features for GPU/CPU specific PyTorch builds
+
+[feature.gpu.system-requirements]
+cuda = "12.0"
+
+[feature.gpu.dependencies]
+# Install CUDA runtime and GPU-enabled PyTorch compatible with the cluster drivers
+cuda-version = "12.6.*"
+pytorch-gpu = "*"
+
+[feature.cpu.dependencies]
+pytorch-cpu = "*"
+
+[environments]
+# Use `pixi run -e gpu ...` on the cluster to enable GPU build
+gpu = { features = ["gpu"], solve-group = "gpu" }
+# Use `pixi run -e cpu ...` locally (or default) for CPU-only build
+cpu = { features = ["cpu"], solve-group = "cpu" }
