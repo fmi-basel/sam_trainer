@@ -27,12 +27,9 @@ rich = ">=13.0"
 
 # Optional features for GPU/CPU specific PyTorch builds
 
-[feature.gpu.system-requirements]
-cuda = "12.0"
-
 [feature.gpu.dependencies]
 # Install CUDA runtime and GPU-enabled PyTorch compatible with the cluster drivers
-cuda-version = "12.6.*"
+cuda-version = "12.*"
 pytorch-gpu = "*"
 
 [feature.cpu.dependencies]
