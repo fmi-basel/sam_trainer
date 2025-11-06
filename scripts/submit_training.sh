@@ -1,14 +1,14 @@
 #!/bin/bash
 #SBATCH --account=dlthings
 #SBATCH --job-name=sam-train
-#SBATCH --cpus-per-task=20
+#SBATCH --cpus-per-task=40
 #SBATCH --ntasks=1
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
 #SBATCH --partition=main
-#SBATCH --mem=64G
+#SBATCH --mem=128G
 #SBATCH --gres=gpu:1
-#SBATCH --constraint="infiniband&gpuram32gb"
+#SBATCH --constraint="infiniband&gpuram80gb"
 #SBATCH --time=48:00:00
 # Write logs into logs/<job-name>-<jobid>.out|.err under the working directory
 # NOTE: the directory is created below before running

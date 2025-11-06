@@ -86,3 +86,7 @@ Thumbs.db
 # Project-specific data and output directories
 dat/
 runs/
+infrastructure/
+logs/
+**/*.out
+**/*.err
