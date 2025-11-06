@@ -35,9 +35,6 @@ echo "[INFO] [$STARTDATE] [$$] Starting SLURM job $SLURM_JOB_ID"
 echo "[INFO] [$STARTDATE] [$$] Running in $(hostname -s)"
 echo "[INFO] [$STARTDATE] [$$] Working directory: $(pwd)"
 
-# Ensure logs directory exists for SBATCH outputs
-mkdir -p logs
-
 ### SAM TRAINING SCRIPT
 
 # Check if config file was provided
