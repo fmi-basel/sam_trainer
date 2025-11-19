@@ -1,9 +1,9 @@
-experiment_name: "training_original_images"
+experiment_name: "all_mip164"
 output_base_dir: "runs"
 augmentation: null
 training:
-  images_dir: "dat/train_orig_40/images"
-  labels_dir: "dat/train_orig_40/labels"
+  images_dir: "dat/training_data/images"
+  labels_dir: "dat/training_data/labels"
   model_type: "vit_b_lm"
   patch_shape: [512, 512]
   batch_size: 4  # Increased from 2 to better utilize A40 GPU
@@ -12,6 +12,6 @@ training:
   num_workers: 4  # NEW: Parallel data loading to eliminate bottleneck
   learning_rate: 2.0e-05  # Adjusted for batch_size=4 (2 * sqrt(4) * 1e-5)
   val_split: 0.1
-  checkpoint_name: "training_original_40_images"
+  checkpoint_name: "all_mip164"
   resume_from_checkpoint: null
-  export_path: null
+  export_path: "final_models/all_mip164_model.pth"
