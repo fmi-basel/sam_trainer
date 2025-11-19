@@ -99,6 +99,20 @@ class TrainingConfig(BaseModel):
         default=None,
         description="Optional random seed for shuffling (None = random seed)",
     )
+    use_min_instance_sampler: bool = Field(
+        default=True,
+        description="Use a MinInstanceSampler to ensure patches contain foreground instances",
+    )
+    min_instances_per_patch: int = Field(
+        default=1,
+        ge=1,
+        description="Minimum number of distinct instances required per sampled patch",
+    )
+    min_instance_size: int = Field(
+        default=25,
+        ge=1,
+        description="Minimum instance size (in pixels) to consider for the sampler",
+    )
 
     # Checkpoint configuration
     checkpoint_name: str = Field(..., description="Name for this training run")

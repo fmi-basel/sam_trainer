@@ -113,6 +113,19 @@ def config(
         if typer.confirm("Specify a shuffle seed for reproducibility?", default=False):
             shuffle_seed = typer.prompt("Shuffle seed", type=int)
 
+    use_min_instance_sampler = typer.confirm(
+        "Use foreground-aware sampling (MinInstanceSampler)?", default=True
+    )
+    min_instances_per_patch = 1
+    min_instance_size = 25
+    if use_min_instance_sampler:
+        min_instances_per_patch = typer.prompt(
+            "Minimum distinct instances per patch", type=int, default=1
+        )
+        min_instance_size = typer.prompt(
+            "Minimum instance size (pixels)", type=int, default=25
+        )
+
     checkpoint_name = typer.prompt("Checkpoint name", default=experiment_name)
 
     resume = typer.confirm("Resume from existing checkpoint?", default=False)
@@ -131,6 +144,9 @@ def config(
         val_split=val_split,
         shuffle_data=shuffle_data,
         shuffle_seed=shuffle_seed,
+        use_min_instance_sampler=use_min_instance_sampler,
+        min_instances_per_patch=min_instances_per_patch,
+        min_instance_size=min_instance_size,
         checkpoint_name=checkpoint_name,
         resume_from_checkpoint=resume_path,
     )

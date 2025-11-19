@@ -11,6 +11,7 @@ from micro_sam.training import (
     export_instance_segmentation_model,
     train_instance_segmentation,
 )
+from torch_em.data import MinInstanceSampler
 
 from sam_trainer.config import TrainingConfig
 from sam_trainer.io import get_image_paths
@@ -116,6 +117,18 @@ def run_training(config: TrainingConfig, output_dir: Path) -> dict[str, Path]:
     # Create data loaders
     logger.info("Creating data loaders...")
     logger.info(f"Using {config.num_workers} dataloader workers")
+
+    sampler = None
+    if config.use_min_instance_sampler:
+        sampler = MinInstanceSampler(
+            config.min_instances_per_patch,
+            min_size=config.min_instance_size,
+        )
+        logger.info(
+            "Using MinInstanceSampler (min_instances=%s, min_size=%s)",
+            config.min_instances_per_patch,
+            config.min_instance_size,
+        )
     train_loader = default_sam_loader(
         raw_paths=[str(p) for p in train_images],
         label_paths=[str(p) for p in train_labels],
@@ -128,6 +141,7 @@ def run_training(config: TrainingConfig, output_dir: Path) -> dict[str, Path]:
         is_train=True,
         n_samples=config.n_samples,  # Number of patches per image per epoch
         num_workers=config.num_workers,  # Parallel data loading
+        sampler=sampler,
     )
 
     val_loader = default_sam_loader(
