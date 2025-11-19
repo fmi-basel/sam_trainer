@@ -16,8 +16,32 @@ from torch_em.data import MinInstanceSampler
 
 from sam_trainer.config import TrainingConfig
 from sam_trainer.io import get_image_paths
+from sam_trainer.normalization import normalize_to_uint8
 
 logger = logging.getLogger(__name__)
+
+
+def _build_raw_transform(config: TrainingConfig):
+    if not config.normalize_inputs:
+        return None
+
+    lower = config.normalize_lower_percentile
+    upper = config.normalize_upper_percentile
+    logger.info(
+        "Applying percentile normalization (lower=%.2f, upper=%.2f)",
+        lower,
+        upper,
+    )
+
+    def _transform(raw):
+        return normalize_to_uint8(
+            raw,
+            lower,
+            upper,
+            skip_if_uint8=True,
+        )
+
+    return _transform
 
 
 def prepare_data_splits(
@@ -119,6 +143,7 @@ def run_training(config: TrainingConfig, output_dir: Path) -> dict[str, Path]:
     logger.info("Creating data loaders...")
     logger.info(f"Using {config.num_workers} dataloader workers")
 
+    raw_transform = _build_raw_transform(config)
     sampler = None
     if config.use_min_instance_sampler and config.train_instance_segmentation_only:
         sampler = MinInstanceSampler(
@@ -139,6 +164,7 @@ def run_training(config: TrainingConfig, output_dir: Path) -> dict[str, Path]:
         "train_instance_segmentation_only": config.train_instance_segmentation_only,
         "n_samples": config.n_samples,
         "num_workers": config.num_workers,
+        "raw_transform": raw_transform,
     }
 
     if sampler is not None:
