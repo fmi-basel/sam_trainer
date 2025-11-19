@@ -88,5 +88,6 @@ dat/
 runs/
 infrastructure/
 logs/
+results/
 **/*.out
 **/*.err

@@ -336,3 +336,24 @@ Built on top of:
 - [micro-SAM](https://github.com/computational-cell-analytics/micro-sam)
 - [torch-em](https://github.com/constantinpape/torch-em)
 - [albumentations](https://github.com/albumentations-team/albumentations)
+
+# Basic usage
+
+python scripts/run_inference.py \
+    --model runs/training_original_images/checkpoints/training_original_40_images/best.pt \
+    --input dat/test_images/ \
+    --output results/predictions/
+
+# With verbosity
+
+python scripts/run_inference.py -m model.pt -i images/ -o masks/ -vv
+
+# With tiling for large images (recommended for 2048x2048+ images)
+
+python scripts/run_inference.py \
+    -m model.pt -i images/ -o masks/ \
+    --tile-shape 512,512 --halo 64,64
+
+# Different file pattern
+
+python scripts/run_inference.py -m model.pt -i images/ -o masks/ --pattern "*.tiff"

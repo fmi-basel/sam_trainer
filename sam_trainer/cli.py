@@ -105,6 +105,13 @@ def config(
     n_epochs = typer.prompt("Number of epochs", type=int, default=100)
     learning_rate = typer.prompt("Learning rate", type=float, default=1e-5)
     val_split = typer.prompt("Validation split ratio", type=float, default=0.1)
+    shuffle_data = typer.confirm(
+        "Shuffle data before splitting into train/val?", default=True
+    )
+    shuffle_seed = None
+    if shuffle_data:
+        if typer.confirm("Specify a shuffle seed for reproducibility?", default=False):
+            shuffle_seed = typer.prompt("Shuffle seed", type=int)
 
     checkpoint_name = typer.prompt("Checkpoint name", default=experiment_name)
 
@@ -122,6 +129,8 @@ def config(
         n_epochs=n_epochs,
         learning_rate=learning_rate,
         val_split=val_split,
+        shuffle_data=shuffle_data,
+        shuffle_seed=shuffle_seed,
         checkpoint_name=checkpoint_name,
         resume_from_checkpoint=resume_path,
     )

@@ -20,6 +20,9 @@ from micro_sam.automatic_segmentation import (
     automatic_instance_segmentation,
     get_predictor_and_segmenter,
 )
+from micro_sam.instance_segmentation import (
+    InstanceSegmentationWithDecoder,
+)
 from rich.console import Console
 from rich.logging import RichHandler
 from rich.progress import Progress, SpinnerColumn, TextColumn
@@ -46,6 +49,49 @@ def setup_logging(verbosity: int) -> None:
 
 
 logger = logging.getLogger(__name__)
+
+
+def load_model_with_decoder(model_path: str, model_type: str, device: str) -> tuple:
+    """Load an exported model that includes decoder state.
+
+    Args:
+        model_path: Path to exported model checkpoint
+        model_type: SAM model type
+        device: Device to load on
+
+    Returns:
+        Tuple of (predictor, segmenter)
+    """
+    from micro_sam.instance_segmentation import get_decoder
+    from micro_sam.util import get_sam_model
+
+    # Load the checkpoint
+    checkpoint = torch.load(model_path, map_location=device)
+
+    # Extract SAM model state (remove decoder_state)
+    model_state = {k: v for k, v in checkpoint.items() if k != "decoder_state"}
+
+    # Load SAM model
+    predictor = get_sam_model(
+        model_type=model_type,
+        checkpoint_path=None,  # We'll load state manually
+        device=device,
+        return_sam=False,
+    )
+    sam = predictor.model
+    sam.load_state_dict(model_state, strict=False)
+
+    # Load decoder with the image encoder
+    decoder = get_decoder(
+        image_encoder=sam.image_encoder,
+        decoder_state=checkpoint["decoder_state"],
+        device=device,
+    )
+
+    # Create segmenter
+    segmenter = InstanceSegmentationWithDecoder(predictor, decoder)
+
+    return predictor, segmenter
 
 
 def load_image(image_path: Path) -> np.ndarray:
@@ -87,6 +133,7 @@ def run_inference_on_image(
     image: np.ndarray,
     predictor,
     segmenter,
+    use_decoder: bool = False,
     tile_shape: Optional[tuple[int, int]] = None,
     halo: Optional[tuple[int, int]] = None,
 ) -> np.ndarray:
@@ -94,23 +141,36 @@ def run_inference_on_image(
 
     Args:
         image: Input image (2D grayscale)
-        predictor: SAM predictor from get_predictor_and_segmenter
-        segmenter: Segmenter from get_predictor_and_segmenter
+        predictor: SAM predictor
+        segmenter: Segmenter (AMG or InstanceSegmentationWithDecoder)
+        use_decoder: Whether using decoder-based segmentation
         tile_shape: Optional tile shape for tiling-based segmentation
         halo: Optional overlap for stitching tiles
 
     Returns:
         Instance segmentation masks
     """
-    # Run automatic instance segmentation (handles normalization internally)
-    masks = automatic_instance_segmentation(
-        predictor=predictor,
-        segmenter=segmenter,
-        input_path=image,
-        ndim=2,
-        tile_shape=tile_shape,
-        halo=halo,
-    )
+    if use_decoder:
+        # Use decoder-based instance segmentation
+        # Initialize with the image first (required by InstanceSegmentationWithDecoder)
+        segmenter.initialize(image)
+        predictions = segmenter.generate(image)
+
+        # Convert predictions (list of dicts with masks) to label image
+        masks = np.zeros(image.shape, dtype=np.uint16)
+        for idx, pred in enumerate(predictions, start=1):
+            mask = pred["segmentation"]
+            masks[mask > 0] = idx
+    else:
+        # Use AMG-based automatic instance segmentation (handles normalization internally)
+        masks = automatic_instance_segmentation(
+            predictor=predictor,
+            segmenter=segmenter,
+            input_path=image,
+            ndim=2,
+            tile_shape=tile_shape,
+            halo=halo,
+        )
 
     return masks
 
@@ -134,6 +194,11 @@ def main(
         "--model-type",
         "-t",
         help="SAM model type (vit_t, vit_b, vit_l, vit_h, vit_t_lm, vit_b_lm, vit_l_lm)",
+    ),
+    use_decoder: bool = typer.Option(
+        False,
+        "--use-decoder",
+        help="Use instance segmentation decoder (for exported models with decoder_state)",
     ),
     device: Optional[str] = typer.Option(
         None,
@@ -200,18 +265,34 @@ def main(
 
     # Load model using micro-SAM's approach from the notebook
     console.print(f"[cyan]Loading model:[/cyan] {model}")
-    try:
-        predictor, segmenter = get_predictor_and_segmenter(
-            model_type=model_type,
-            checkpoint=str(model),
-            device=device,
-            is_tiled=(tile_shape_tuple is not None),
-        )
-        console.print("[green]✓[/green] Model loaded successfully")
-    except Exception as e:
-        console.print(f"[bold red]Error loading model:[/bold red] {e}")
-        logger.exception("Model loading failed")
-        raise typer.Exit(1)
+
+    if use_decoder:
+        console.print("[cyan]Mode:[/cyan] Using instance segmentation decoder")
+        try:
+            predictor, segmenter = load_model_with_decoder(
+                model_path=str(model),
+                model_type=model_type,
+                device=device,
+            )
+            console.print("[green]✓[/green] Model and decoder loaded successfully")
+        except Exception as e:
+            console.print(f"[bold red]Error loading model with decoder:[/bold red] {e}")
+            logger.exception("Model loading failed")
+            raise typer.Exit(1)
+    else:
+        console.print("[cyan]Mode:[/cyan] Using AMG-based segmentation")
+        try:
+            predictor, segmenter = get_predictor_and_segmenter(
+                model_type=model_type,
+                checkpoint=str(model),
+                device=device,
+                is_tiled=(tile_shape_tuple is not None),
+            )
+            console.print("[green]✓[/green] Model loaded successfully")
+        except Exception as e:
+            console.print(f"[bold red]Error loading model:[/bold red] {e}")
+            logger.exception("Model loading failed")
+            raise typer.Exit(1)
 
     # Get list of images
     image_files = sorted(input_dir.glob(pattern))
@@ -244,7 +325,12 @@ def main(
 
                 # Run inference
                 masks = run_inference_on_image(
-                    image, predictor, segmenter, tile_shape_tuple, halo_tuple
+                    image,
+                    predictor,
+                    segmenter,
+                    use_decoder,
+                    tile_shape_tuple,
+                    halo_tuple,
                 )
 
                 n_instances = len(np.unique(masks)) - 1  # Subtract background

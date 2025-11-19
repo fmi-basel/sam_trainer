@@ -1,7 +1,9 @@
 """Training module for SAM instance segmentation models."""
 
 import logging
+import random
 from pathlib import Path
+from typing import Optional
 
 import torch
 from micro_sam.training import (
@@ -17,7 +19,12 @@ logger = logging.getLogger(__name__)
 
 
 def prepare_data_splits(
-    images_dir: Path, labels_dir: Path, val_split: float
+    images_dir: Path,
+    labels_dir: Path,
+    val_split: float,
+    *,
+    shuffle: bool = True,
+    seed: Optional[int] = None,
 ) -> tuple[list[Path], list[Path], list[Path], list[Path]]:
     """Prepare train/validation splits from data directories.
 
@@ -47,11 +54,18 @@ def prepare_data_splits(
 
     logger.info(f"Total samples: {n_total}, Train: {n_train}, Val: {n_val}")
 
-    # Split data (last n_val samples for validation)
-    train_images = image_paths[:n_train]
-    train_labels = label_paths[:n_train]
-    val_images = image_paths[n_train:]
-    val_labels = label_paths[n_train:]
+    indices = list(range(n_total))
+    if shuffle:
+        rng = random.Random(seed)
+        rng.shuffle(indices)
+
+    shuffled_images = [image_paths[i] for i in indices]
+    shuffled_labels = [label_paths[i] for i in indices]
+
+    train_images = shuffled_images[:n_train]
+    train_labels = shuffled_labels[:n_train]
+    val_images = shuffled_images[n_train:]
+    val_labels = shuffled_labels[n_train:]
 
     return train_images, train_labels, val_images, val_labels
 
@@ -92,7 +106,11 @@ def run_training(config: TrainingConfig, output_dir: Path) -> dict[str, Path]:
 
     # Prepare data splits
     train_images, train_labels, val_images, val_labels = prepare_data_splits(
-        config.images_dir, config.labels_dir, config.val_split
+        config.images_dir,
+        config.labels_dir,
+        config.val_split,
+        shuffle=config.shuffle_data,
+        seed=config.shuffle_seed,
     )
 
     # Create data loaders

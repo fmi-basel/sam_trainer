@@ -91,6 +91,14 @@ class TrainingConfig(BaseModel):
     val_split: float = Field(
         default=0.1, gt=0, lt=1, description="Validation split ratio"
     )
+    shuffle_data: bool = Field(
+        default=True,
+        description="Whether to shuffle data before splitting into train/validation",
+    )
+    shuffle_seed: Optional[int] = Field(
+        default=None,
+        description="Optional random seed for shuffling (None = random seed)",
+    )
 
     # Checkpoint configuration
     checkpoint_name: str = Field(..., description="Name for this training run")
