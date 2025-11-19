@@ -99,6 +99,10 @@ class TrainingConfig(BaseModel):
         default=None,
         description="Optional random seed for shuffling (None = random seed)",
     )
+    train_instance_segmentation_only: bool = Field(
+        default=True,
+        description="If True, train only the instance decoder; if False, fine-tune the full SAM",
+    )
     use_min_instance_sampler: bool = Field(
         default=True,
         description="Use a MinInstanceSampler to ensure patches contain foreground instances",

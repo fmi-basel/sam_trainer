@@ -1,0 +1,26 @@
+experiment_name: "full_sam_pipeline"
+output_base_dir: "runs"
+log_level: "INFO"
+
+augmentation: null
+
+training:
+  images_dir: "dat/training_data/images"
+  labels_dir: "dat/training_data/labels"
+  model_type: "vit_b_lm"
+  patch_shape: [512, 512]
+  batch_size: 2
+  n_epochs: 120
+  n_samples: 24
+  num_workers: 8
+  learning_rate: 8.0e-06
+  val_split: 0.10
+  shuffle_data: true
+  shuffle_seed: 1337
+  train_instance_segmentation_only: false
+  use_min_instance_sampler: true
+  min_instances_per_patch: 1
+  min_instance_size: 25
+  checkpoint_name: "full_sam_pipeline"
+  resume_from_checkpoint: null
+  export_path: "final_models/full_sam_pipeline_model.pt"

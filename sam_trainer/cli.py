@@ -113,6 +113,10 @@ def config(
         if typer.confirm("Specify a shuffle seed for reproducibility?", default=False):
             shuffle_seed = typer.prompt("Shuffle seed", type=int)
 
+    instance_only = typer.confirm(
+        "Train decoder only (skip full model re-training)?", default=True
+    )
+
     use_min_instance_sampler = typer.confirm(
         "Use foreground-aware sampling (MinInstanceSampler)?", default=True
     )
@@ -144,6 +148,7 @@ def config(
         val_split=val_split,
         shuffle_data=shuffle_data,
         shuffle_seed=shuffle_seed,
+        train_instance_segmentation_only=instance_only,
         use_min_instance_sampler=use_min_instance_sampler,
         min_instances_per_patch=min_instances_per_patch,
         min_instance_size=min_instance_size,

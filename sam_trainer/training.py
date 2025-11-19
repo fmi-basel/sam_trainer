@@ -10,6 +10,7 @@ from micro_sam.training import (
     default_sam_loader,
     export_instance_segmentation_model,
     train_instance_segmentation,
+    train_sam,
 )
 from torch_em.data import MinInstanceSampler
 
@@ -119,7 +120,7 @@ def run_training(config: TrainingConfig, output_dir: Path) -> dict[str, Path]:
     logger.info(f"Using {config.num_workers} dataloader workers")
 
     sampler = None
-    if config.use_min_instance_sampler:
+    if config.use_min_instance_sampler and config.train_instance_segmentation_only:
         sampler = MinInstanceSampler(
             config.min_instances_per_patch,
             min_size=config.min_instance_size,
@@ -129,61 +130,63 @@ def run_training(config: TrainingConfig, output_dir: Path) -> dict[str, Path]:
             config.min_instances_per_patch,
             config.min_instance_size,
         )
+    loader_kwargs = {
+        "raw_key": None,
+        "label_key": None,
+        "batch_size": config.batch_size,
+        "patch_shape": config.patch_shape,
+        "with_segmentation_decoder": True,
+        "train_instance_segmentation_only": config.train_instance_segmentation_only,
+        "n_samples": config.n_samples,
+        "num_workers": config.num_workers,
+    }
+
+    if sampler is not None:
+        loader_kwargs["sampler"] = sampler
+
     train_loader = default_sam_loader(
         raw_paths=[str(p) for p in train_images],
         label_paths=[str(p) for p in train_labels],
-        raw_key=None,
-        label_key=None,
-        batch_size=config.batch_size,
-        patch_shape=config.patch_shape,
-        with_segmentation_decoder=True,
-        train_instance_segmentation_only=True,
         is_train=True,
-        n_samples=config.n_samples,  # Number of patches per image per epoch
-        num_workers=config.num_workers,  # Parallel data loading
-        sampler=sampler,
+        **loader_kwargs,
     )
 
     val_loader = default_sam_loader(
         raw_paths=[str(p) for p in val_images],
         label_paths=[str(p) for p in val_labels],
-        raw_key=None,
-        label_key=None,
-        batch_size=config.batch_size,
-        patch_shape=config.patch_shape,
-        with_segmentation_decoder=True,
-        train_instance_segmentation_only=True,
         is_train=False,
-        n_samples=config.n_samples,  # Number of patches per image per epoch
-        num_workers=config.num_workers,  # Parallel data loading
+        **{
+            **loader_kwargs,
+            "sampler": None,
+        },
     )
 
     logger.info(f"Train batches: {len(train_loader)}, Val batches: {len(val_loader)}")
 
     # Set up checkpoint directory
-    # Note: micro-SAM's train_instance_segmentation will create checkpoints/<name>/
-    # under save_root, so we pass the experiment dir directly
+    # Note: micro-SAM's trainers will create checkpoints/<name>/ under save_root
     checkpoint_dir = output_dir / "checkpoints" / config.checkpoint_name
 
-    # Training arguments
-    train_kwargs = {
+    base_kwargs = {
         "name": config.checkpoint_name,
         "model_type": config.model_type,
         "train_loader": train_loader,
         "val_loader": val_loader,
         "n_epochs": config.n_epochs,
-        "lr": config.learning_rate,  # micro-SAM uses 'lr' not 'learning_rate'
-        "save_root": str(output_dir),  # micro-SAM will add checkpoints/<name> itself
+        "lr": config.learning_rate,
+        "save_root": str(output_dir),
     }
 
-    # Add checkpoint resume if specified
     if config.resume_from_checkpoint is not None:
         logger.info(f"Resuming from checkpoint: {config.resume_from_checkpoint}")
-        train_kwargs["checkpoint_path"] = str(config.resume_from_checkpoint)
+        base_kwargs["checkpoint_path"] = str(config.resume_from_checkpoint)
 
     # Run training
     logger.info("Starting training loop...")
-    train_instance_segmentation(**train_kwargs)
+    if config.train_instance_segmentation_only:
+        train_instance_segmentation(**base_kwargs)
+    else:
+        train_sam(with_segmentation_decoder=True, **base_kwargs)
 
     # Export model
     best_checkpoint = checkpoint_dir / "best.pt"
