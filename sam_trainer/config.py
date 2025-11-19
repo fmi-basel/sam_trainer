@@ -47,38 +47,12 @@ class AugmentationConfig(BaseModel):
     brightness_contrast: bool = Field(
         default=True, description="Apply random brightness/contrast adjustments"
     )
-    normalize_outputs: bool = Field(
-        default=True,
-        description="Normalize augmented images to uint8 using percentiles",
-    )
-    normalize_lower_percentile: float = Field(
-        default=1.0,
-        ge=0,
-        lt=100,
-        description="Lower percentile used for augmentation output normalization",
-    )
-    normalize_upper_percentile: float = Field(
-        default=99.5,
-        gt=0,
-        le=100,
-        description="Upper percentile used for augmentation output normalization",
-    )
 
     @field_validator("input_images_dir", "input_labels_dir")
     @classmethod
     def validate_input_dirs_exist(cls, v: Path) -> Path:
         if not v.exists():
             raise ValueError(f"Directory does not exist: {v}")
-        return v
-
-    @field_validator("normalize_upper_percentile")
-    @classmethod
-    def validate_aug_percentiles(cls, v: float, info) -> float:
-        lower = info.data.get("normalize_lower_percentile", 0.0)
-        if v <= lower:
-            raise ValueError(
-                "normalize_upper_percentile must be greater than normalize_lower_percentile"
-            )
         return v
 
     class Config:

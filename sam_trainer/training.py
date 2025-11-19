@@ -5,6 +5,7 @@ import random
 from pathlib import Path
 from typing import Optional
 
+import numpy as np
 import torch
 from micro_sam.training import (
     default_sam_loader,
@@ -16,7 +17,6 @@ from torch_em.data import MinInstanceSampler
 
 from sam_trainer.config import TrainingConfig
 from sam_trainer.io import get_image_paths
-from sam_trainer.normalization import normalize_to_uint8
 
 logger = logging.getLogger(__name__)
 
@@ -34,12 +34,17 @@ def _build_raw_transform(config: TrainingConfig):
     )
 
     def _transform(raw):
-        return normalize_to_uint8(
-            raw,
-            lower,
-            upper,
-            skip_if_uint8=True,
-        )
+        arr = np.asarray(raw, dtype=np.float32)
+        lo, hi = np.percentile(arr, [lower, upper])
+        if hi <= lo:
+            lo = float(arr.min())
+            hi = float(arr.max())
+            if hi == lo:
+                hi = lo + 1.0
+        arr = np.clip(arr, lo, hi)
+        arr = (arr - lo) / (hi - lo)
+        arr = (arr * 255.0).astype(np.uint8)
+        return arr
 
     return _transform
 
