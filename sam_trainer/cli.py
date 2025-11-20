@@ -68,23 +68,10 @@ def config(
         aug_output = Path(typer.prompt("Output directory for augmented data"))
         aug_format = typer.prompt(
             "Output format",
-            type=click.Choice(["original", "ome-zarr", "tif", "hdf5"]),
+            type=click.Choice(["ome-zarr", "tif", "hdf5"]),
             default="ome-zarr",
         )
         n_aug = typer.prompt("Number of augmentations per image", type=int, default=3)
-        normalize_aug = typer.confirm(
-            "Normalize augmented outputs to uint8?",
-            default=True,
-        )
-        aug_lower_pct = 1.0
-        aug_upper_pct = 99.5
-        if normalize_aug:
-            aug_lower_pct = typer.prompt(
-                "Augmentation lower percentile", type=float, default=1.0
-            )
-            aug_upper_pct = typer.prompt(
-                "Augmentation upper percentile", type=float, default=99.5
-            )
 
         aug_config = AugmentationConfig(
             input_images_dir=aug_input_images,
@@ -92,9 +79,6 @@ def config(
             output_dir=aug_output,
             output_format=aug_format,
             n_augmentations=n_aug,
-            normalize_outputs=normalize_aug,
-            normalize_lower_percentile=aug_lower_pct,
-            normalize_upper_percentile=aug_upper_pct,
         )
 
     # Training
@@ -303,21 +287,6 @@ def augment(
         "--treat-3d-as-2d",
         help="Treat 3D stacks as separate 2D slices with independent augmentations",
     ),
-    normalize_outputs: bool = typer.Option(
-        True,
-        "--normalize/--no-normalize",
-        help="Normalize augmented images to uint8 before writing",
-    ),
-    normalize_lower_percentile: float = typer.Option(
-        1.0,
-        "--normalize-lower",
-        help="Lower percentile for augmentation normalization",
-    ),
-    normalize_upper_percentile: float = typer.Option(
-        99.5,
-        "--normalize-upper",
-        help="Upper percentile for augmentation normalization",
-    ),
     verbose: int = typer.Option(
         0, "--verbose", "-v", count=True, help="Increase logging verbosity"
     ),
@@ -333,9 +302,6 @@ def augment(
         output_format=output_format,
         n_augmentations=n_augmentations,
         treat_3d_as_2d=treat_3d_as_2d,
-        normalize_outputs=normalize_outputs,
-        normalize_lower_percentile=normalize_lower_percentile,
-        normalize_upper_percentile=normalize_upper_percentile,
     )
 
     # Run augmentation
