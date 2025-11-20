@@ -21,6 +21,25 @@ from sam_trainer.io import get_image_paths
 logger = logging.getLogger(__name__)
 
 
+class PercentileNormalizer:
+    def __init__(self, lower: float, upper: float):
+        self.lower = lower
+        self.upper = upper
+
+    def __call__(self, raw):
+        arr = np.asarray(raw, dtype=np.float32)
+        lo, hi = np.percentile(arr, [self.lower, self.upper])
+        if hi <= lo:
+            lo = float(arr.min())
+            hi = float(arr.max())
+            if hi == lo:
+                hi = lo + 1.0
+        arr = np.clip(arr, lo, hi)
+        arr = (arr - lo) / (hi - lo)
+        arr = (arr * 255.0).astype(np.uint8)
+        return arr
+
+
 def _build_raw_transform(config: TrainingConfig):
     if not config.normalize_inputs:
         return None
@@ -33,20 +52,7 @@ def _build_raw_transform(config: TrainingConfig):
         upper,
     )
 
-    def _transform(raw):
-        arr = np.asarray(raw, dtype=np.float32)
-        lo, hi = np.percentile(arr, [lower, upper])
-        if hi <= lo:
-            lo = float(arr.min())
-            hi = float(arr.max())
-            if hi == lo:
-                hi = lo + 1.0
-        arr = np.clip(arr, lo, hi)
-        arr = (arr - lo) / (hi - lo)
-        arr = (arr * 255.0).astype(np.uint8)
-        return arr
-
-    return _transform
+    return PercentileNormalizer(lower, upper)
 
 
 def prepare_data_splits(
