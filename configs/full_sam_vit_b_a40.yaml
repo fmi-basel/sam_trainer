@@ -2,13 +2,14 @@ experiment_name: "full_sam_vit_b_a40"
 output_base_dir: "runs"
 augmentation: null
 training:
-  images_dir: "dat/training_data/images"
-  labels_dir: "dat/training_data/labels"
+  images_dir: "dat/augmented_training_data/images"
+  labels_dir: "dat/augmented_training_data/labels"
   model_type: "vit_b_lm"
   patch_shape: [512, 512]
   batch_size: 8
   n_epochs: 100
-  n_samples: 300
+  n_samples: 1900
+  n_objects_per_batch: 5
   num_workers: 16
   learning_rate: 1.0e-4
   val_split: 0.1
@@ -18,6 +19,7 @@ training:
   use_min_instance_sampler: true
   min_instances_per_patch: 1
   min_instance_size: 25
+  sampler_max_tries: 10000
   checkpoint_name: "full_sam_vit_b_a40"
   resume_from_checkpoint: null
   export_path: "final_models/full_sam_vit_b_a40.pt"

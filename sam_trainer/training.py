@@ -160,11 +160,13 @@ def run_training(config: TrainingConfig, output_dir: Path) -> dict[str, Path]:
         sampler = MinInstanceSampler(
             config.min_instances_per_patch,
             min_size=config.min_instance_size,
+            max_num_tries=config.sampler_max_tries,
         )
         logger.info(
-            "Using MinInstanceSampler (min_instances=%s, min_size=%s)",
+            "Using MinInstanceSampler (min_instances=%s, min_size=%s, max_tries=%s)",
             config.min_instances_per_patch,
             config.min_instance_size,
+            config.sampler_max_tries,
         )
     loader_kwargs = {
         "raw_key": None,
@@ -213,6 +215,9 @@ def run_training(config: TrainingConfig, output_dir: Path) -> dict[str, Path]:
         "lr": config.learning_rate,
         "save_root": str(output_dir),
     }
+
+    if not config.train_instance_segmentation_only:
+        base_kwargs["n_objects_per_batch"] = config.n_objects_per_batch
 
     if config.resume_from_checkpoint is not None:
         logger.info(f"Resuming from checkpoint: {config.resume_from_checkpoint}")

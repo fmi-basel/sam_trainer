@@ -133,6 +133,16 @@ class TrainingConfig(BaseModel):
         ge=1,
         description="Minimum instance size (in pixels) to consider for the sampler",
     )
+    sampler_max_tries: int = Field(
+        default=1000,
+        ge=1,
+        description="Maximum number of attempts to sample a valid patch",
+    )
+    n_objects_per_batch: int = Field(
+        default=5,
+        ge=1,
+        description="Number of objects to sample per batch for SAM training",
+    )
 
     # Checkpoint configuration
     checkpoint_name: str = Field(..., description="Name for this training run")
