@@ -16,7 +16,7 @@ training:
   shuffle_seed: 42
   train_instance_segmentation_only: false
   use_min_instance_sampler: true
-  min_instances_per_patch: 2
+  min_instances_per_patch: 1
   min_instance_size: 25
   checkpoint_name: "full_sam_vit_b_a100_more_samples"
   resume_from_checkpoint: null

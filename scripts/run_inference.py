@@ -10,7 +10,7 @@ Usage:
 
 import logging
 from pathlib import Path
-from typing import Optional
+from typing import Any, Dict, Optional, Tuple
 
 import numpy as np
 import tifffile
@@ -20,9 +20,7 @@ from micro_sam.automatic_segmentation import (
     automatic_instance_segmentation,
     get_predictor_and_segmenter,
 )
-from micro_sam.instance_segmentation import (
-    InstanceSegmentationWithDecoder,
-)
+from micro_sam.instance_segmentation import InstanceSegmentationWithDecoder
 from rich.console import Console
 from rich.logging import RichHandler
 from rich.progress import Progress, SpinnerColumn, TextColumn
@@ -129,6 +127,57 @@ def save_masks(masks: np.ndarray, output_path: Path) -> None:
     tifffile.imwrite(output_path, masks.astype(np.uint16), compression="zlib")
 
 
+def postprocess_masks(
+    masks: np.ndarray,
+    min_area: int = 0,
+    border_margin: int = 0,
+    max_instances: Optional[int] = None,
+) -> Tuple[np.ndarray, int]:
+    """Filter tiny or border-touching instances and relabel sequentially."""
+
+    label_ids = np.unique(masks)
+    label_ids = label_ids[label_ids != 0]
+    if label_ids.size == 0:
+        return masks.astype(np.uint16, copy=False), 0
+
+    kept: list[Tuple[int, int]] = []
+    height, width = masks.shape
+    for label_id in label_ids:
+        region_mask = masks == label_id
+        area = int(region_mask.sum())
+        if min_area > 0 and area < min_area:
+            continue
+
+        if border_margin > 0:
+            ys, xs = np.nonzero(region_mask)
+            if ys.size == 0:
+                continue
+            touches_border = (
+                (ys < border_margin).any()
+                or (ys >= height - border_margin).any()
+                or (xs < border_margin).any()
+                or (xs >= width - border_margin).any()
+            )
+            if touches_border:
+                continue
+
+        kept.append((area, label_id))
+
+    if not kept:
+        return np.zeros_like(masks, dtype=np.uint16), label_ids.size
+
+    kept.sort(key=lambda item: item[0], reverse=True)
+    if max_instances is not None and max_instances > 0:
+        kept = kept[:max_instances]
+
+    filtered = np.zeros_like(masks, dtype=np.uint16)
+    for new_idx, (_, label_id) in enumerate(kept, start=1):
+        filtered[masks == label_id] = new_idx
+
+    removed = label_ids.size - len(kept)
+    return filtered, removed
+
+
 def run_inference_on_image(
     image: np.ndarray,
     predictor,
@@ -136,6 +185,7 @@ def run_inference_on_image(
     use_decoder: bool = False,
     tile_shape: Optional[tuple[int, int]] = None,
     halo: Optional[tuple[int, int]] = None,
+    generate_kwargs: Optional[Dict[str, Any]] = None,
 ) -> np.ndarray:
     """Run inference on a single image using automatic instance segmentation.
 
@@ -163,6 +213,7 @@ def run_inference_on_image(
             masks[mask > 0] = idx
     else:
         # Use AMG-based automatic instance segmentation (handles normalization internally)
+        generate_kwargs = generate_kwargs or {}
         masks = automatic_instance_segmentation(
             predictor=predictor,
             segmenter=segmenter,
@@ -170,6 +221,7 @@ def run_inference_on_image(
             ndim=2,
             tile_shape=tile_shape,
             halo=halo,
+            **generate_kwargs,
         )
 
     return masks
@@ -215,6 +267,41 @@ def main(
         None,
         "--halo",
         help="Overlap for stitching tiles (e.g., '64,64'). Only used with --tile-shape",
+    ),
+    pred_iou_thresh: Optional[float] = typer.Option(
+        None,
+        "--pred-iou-thresh",
+        help="Override predicted IoU threshold for AMG mask filtering",
+    ),
+    stability_score_thresh: Optional[float] = typer.Option(
+        None,
+        "--stability-score-thresh",
+        help="Override stability score threshold for AMG mask filtering",
+    ),
+    box_nms_thresh: Optional[float] = typer.Option(
+        None,
+        "--box-nms-thresh",
+        help="Override box NMS threshold for AMG mask filtering",
+    ),
+    min_mask_region_area: Optional[int] = typer.Option(
+        None,
+        "--min-mask-region-area",
+        help="Discard AMG masks with smaller area before rasterization",
+    ),
+    max_instances: Optional[int] = typer.Option(
+        None,
+        "--max-instances",
+        help="Keep at most this many instances per image (largest areas first)",
+    ),
+    min_instance_area: int = typer.Option(
+        0,
+        "--min-instance-area",
+        help="Drop instances smaller than this area (pixels) after segmentation",
+    ),
+    border_margin: int = typer.Option(
+        0,
+        "--border-margin",
+        help="Discard instances that touch the border within this many pixels",
     ),
     verbose: int = typer.Option(
         0, "--verbose", "-v", count=True, help="Increase logging verbosity"
@@ -294,6 +381,17 @@ def main(
             logger.exception("Model loading failed")
             raise typer.Exit(1)
 
+    generate_kwargs: Dict[str, Any] = {}
+    if not use_decoder:
+        if pred_iou_thresh is not None:
+            generate_kwargs["pred_iou_thresh"] = pred_iou_thresh
+        if stability_score_thresh is not None:
+            generate_kwargs["stability_score_thresh"] = stability_score_thresh
+        if box_nms_thresh is not None:
+            generate_kwargs["box_nms_thresh"] = box_nms_thresh
+        if min_mask_region_area is not None:
+            generate_kwargs["min_mask_region_area"] = min_mask_region_area
+
     # Get list of images
     image_files = sorted(input_dir.glob(pattern))
     if not image_files:
@@ -331,7 +429,17 @@ def main(
                     use_decoder,
                     tile_shape_tuple,
                     halo_tuple,
+                    generate_kwargs=generate_kwargs,
                 )
+
+                masks, removed = postprocess_masks(
+                    masks,
+                    min_area=min_instance_area,
+                    border_margin=border_margin,
+                    max_instances=max_instances,
+                )
+                if removed:
+                    logger.debug("  Post-processing removed %s instances", removed)
 
                 n_instances = len(np.unique(masks)) - 1  # Subtract background
                 logger.info(f"  {image_path.name}: Found {n_instances} instances")
