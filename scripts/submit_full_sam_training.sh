@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --account=dlthings
-#SBATCH --job-name=sam_training_mip164
-#SBATCH --cpus-per-task=40
+#SBATCH --job-name=full_sam_training
+#SBATCH --cpus-per-task=20
 #SBATCH --ntasks=1
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
