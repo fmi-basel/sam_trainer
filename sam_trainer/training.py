@@ -156,7 +156,7 @@ def run_training(config: TrainingConfig, output_dir: Path) -> dict[str, Path]:
 
     raw_transform = _build_raw_transform(config)
     sampler = None
-    if config.use_min_instance_sampler and config.train_instance_segmentation_only:
+    if config.use_min_instance_sampler:
         sampler = MinInstanceSampler(
             config.min_instances_per_patch,
             min_size=config.min_instance_size,
