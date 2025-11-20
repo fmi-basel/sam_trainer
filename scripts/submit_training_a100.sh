@@ -6,7 +6,7 @@
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
 #SBATCH --partition=main
-#SBATCH --mem=80G
+#SBATCH --mem=100G
 #SBATCH --gres=gpu:1
 #SBATCH --constraint="infiniband&gpuram80gb"
 #SBATCH --time=48:00:00

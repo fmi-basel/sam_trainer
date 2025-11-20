@@ -6,9 +6,9 @@ training:
   labels_dir: "dat/augmented_training_data/labels"
   model_type: "vit_b_lm"
   patch_shape: [512, 512]
-  batch_size: 8
+  batch_size: 4
   n_epochs: 100
-  n_samples: 1900
+  n_samples: 2500
   num_workers: 16
   learning_rate: 1.0e-4
   val_split: 0.1
@@ -16,9 +16,8 @@ training:
   shuffle_seed: 42
   train_instance_segmentation_only: true
   use_min_instance_sampler: true
-  min_instances_per_patch: 1
+  min_instances_per_patch: 2
   min_instance_size: 25
-  sampler_max_tries: 10000
   checkpoint_name: "ais_vit_b_a40"
   resume_from_checkpoint: null
   export_path: "final_models/ais_vit_b_a40.pt"

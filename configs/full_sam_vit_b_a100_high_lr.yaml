@@ -1,4 +1,4 @@
-experiment_name: "ais_vit_b_a100"
+experiment_name: "full_sam_vit_b_a100_high_lr"
 output_base_dir: "runs"
 augmentation: null
 training:
@@ -9,15 +9,15 @@ training:
   batch_size: 4
   n_epochs: 100
   n_samples: 2500
-  num_workers: 16
-  learning_rate: 2.0e-4
+  num_workers: 8
+  learning_rate: 5.0e-5
   val_split: 0.1
   shuffle_data: true
   shuffle_seed: 42
-  train_instance_segmentation_only: true
+  train_instance_segmentation_only: false
   use_min_instance_sampler: true
   min_instances_per_patch: 2
   min_instance_size: 25
-  checkpoint_name: "ais_vit_b_a100"
+  checkpoint_name: "full_sam_vit_b_a100_high_lr"
   resume_from_checkpoint: null
-  export_path: "final_models/ais_vit_b_a100.pt"
+  export_path: "final_models/full_sam_vit_b_a100_high_lr.pt"

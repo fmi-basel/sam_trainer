@@ -124,7 +124,7 @@ class TrainingConfig(BaseModel):
         description="Use a MinInstanceSampler to ensure patches contain foreground instances",
     )
     min_instances_per_patch: int = Field(
-        default=1,
+        default=2,
         ge=1,
         description="Minimum number of distinct instances required per sampled patch",
     )

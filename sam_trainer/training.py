@@ -121,6 +121,11 @@ def run_training(config: TrainingConfig, output_dir: Path) -> dict[str, Path]:
     logger.info(f"Model type: {config.model_type}")
     logger.info(f"Patch shape: {config.patch_shape}")
     logger.info(f"Batch size: {config.batch_size}")
+    logger.info(f"Number of samples: {config.n_samples}")
+    logger.info(f"Number of epochs: {config.n_epochs}")
+    logger.info(f"Learning rate: {config.learning_rate:.2e}")
+    logger.info(f"Validation split: {config.val_split:.2f}")
+    logger.info(f"Number of workers: {config.num_workers}")
 
     # Validate data directories exist before starting
     if not config.images_dir.exists():
@@ -155,11 +160,18 @@ def run_training(config: TrainingConfig, output_dir: Path) -> dict[str, Path]:
     logger.info(f"Using {config.num_workers} dataloader workers")
 
     raw_transform = _build_raw_transform(config)
-    sampler = None
+    train_sampler = None
+    val_sampler = None
     if config.use_min_instance_sampler:
-        sampler = MinInstanceSampler(
-            config.min_instances_per_patch, min_size=config.min_instance_size
+        train_sampler = MinInstanceSampler(
+            config.min_instances_per_patch,
+            min_size=config.min_instance_size,
         )
+        if not config.train_instance_segmentation_only:
+            val_sampler = MinInstanceSampler(
+                config.min_instances_per_patch,
+                min_size=config.min_instance_size,
+            )
         logger.info(
             "Using MinInstanceSampler (min_instances=%s, min_size=%s)",
             config.min_instances_per_patch,
@@ -177,13 +189,11 @@ def run_training(config: TrainingConfig, output_dir: Path) -> dict[str, Path]:
         "raw_transform": raw_transform,
     }
 
-    if sampler is not None:
-        loader_kwargs["sampler"] = sampler
-
     train_loader = default_sam_loader(
         raw_paths=[str(p) for p in train_images],
         label_paths=[str(p) for p in train_labels],
         is_train=True,
+        sampler=train_sampler,
         **loader_kwargs,
     )
 
@@ -191,10 +201,8 @@ def run_training(config: TrainingConfig, output_dir: Path) -> dict[str, Path]:
         raw_paths=[str(p) for p in val_images],
         label_paths=[str(p) for p in val_labels],
         is_train=False,
-        **{
-            **loader_kwargs,
-            "sampler": None,
-        },
+        sampler=val_sampler,
+        **loader_kwargs,
     )
 
     logger.info(f"Train batches: {len(train_loader)}, Val batches: {len(val_loader)}")
