@@ -49,8 +49,9 @@ fi
 
 echo "[INFO] [$STARTDATE] [$$] Using config: $CONFIG_PATH"
 
-# Optional: limit thread oversubscription
-export OMP_NUM_THREADS=${OMP_NUM_THREADS:-4}
+# Set threading for optimal CPU usage with 20 cores
+export OMP_NUM_THREADS=${OMP_NUM_THREADS:-8}
+export MKL_NUM_THREADS=${MKL_NUM_THREADS:-8}
 
 # Run training
 echo "[INFO] [$STARTDATE] [$$] Starting SAM training on A100..."

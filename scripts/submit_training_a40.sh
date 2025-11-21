@@ -1,12 +1,12 @@
 #!/bin/bash
 #SBATCH --account=dlthings
-#SBATCH --job-name=sam_train_a40
+#SBATCH --job-name=full_img_sam_train_a40
 #SBATCH --cpus-per-task=20
 #SBATCH --ntasks=1
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
 #SBATCH --partition=main
-#SBATCH --mem=64G
+#SBATCH --mem=100G
 #SBATCH --gres=gpu:1
 #SBATCH --constraint="infiniband&gpuram48gb"
 #SBATCH --time=48:00:00
@@ -49,8 +49,9 @@ fi
 
 echo "[INFO] [$STARTDATE] [$$] Using config: $CONFIG_PATH"
 
-# Optional: limit thread oversubscription
-export OMP_NUM_THREADS=${OMP_NUM_THREADS:-4}
+# Set threading for optimal CPU usage with 20 cores
+export OMP_NUM_THREADS=${OMP_NUM_THREADS:-8}
+export MKL_NUM_THREADS=${MKL_NUM_THREADS:-8}
 
 # Run training
 echo "[INFO] [$STARTDATE] [$$] Starting SAM training on A40..."

@@ -261,7 +261,7 @@ def main(
     tile_shape: Optional[str] = typer.Option(
         None,
         "--tile-shape",
-        help="Tile shape for large images (e.g., '512,512'). Enables tiling-based segmentation",
+        help="Tile shape for large images (e.g., '512,512'). If not set, processes full images (suitable for models trained on full images)",
     ),
     halo: Optional[str] = typer.Option(
         None,
@@ -333,6 +333,7 @@ def main(
             tile_shape_tuple = tuple(map(int, tile_shape.split(",")))
             if len(tile_shape_tuple) != 2:
                 raise ValueError
+            console.print(f"[cyan]Tiling mode:[/cyan] Using tiles of shape {tile_shape_tuple}")
         except ValueError:
             console.print(
                 "[bold red]Error:[/bold red] tile-shape must be two integers separated by comma (e.g., '512,512')"
@@ -344,11 +345,14 @@ def main(
                 halo_tuple = tuple(map(int, halo.split(",")))
                 if len(halo_tuple) != 2:
                     raise ValueError
+                console.print(f"[cyan]Tile overlap:[/cyan] {halo_tuple}")
             except ValueError:
                 console.print(
                     "[bold red]Error:[/bold red] halo must be two integers separated by comma (e.g., '64,64')"
                 )
                 raise typer.Exit(1)
+    else:
+        console.print("[cyan]Inference mode:[/cyan] Processing full images (no tiling)")
 
     # Load model using micro-SAM's approach from the notebook
     console.print(f"[cyan]Loading model:[/cyan] {model}")

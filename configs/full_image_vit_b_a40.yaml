@@ -1,0 +1,23 @@
+experiment_name: "full_image_vit_b_a40_test"
+output_base_dir: "runs"
+augmentation: null
+training:
+  images_dir: "dat/augmented_training_data/images"
+  labels_dir: "dat/augmented_training_data/labels"
+  model_type: "vit_b_lm"
+  patch_shape: [2048, 2048]  # Full image size - no cropping/patching
+  batch_size: 4  # Increased from 1 - plenty of GPU memory available (only using 13GB/80GB)
+  n_epochs: 10  # Longer training since we see each image once per epoch
+  n_samples: null  # null = use actual dataset size (all images, no random sampling)
+  num_workers: 12  # Increased from 4 to utilize available CPUs (20 allocated)
+  learning_rate: 1.0e-5
+  val_split: 0.05
+  shuffle_data: true
+  shuffle_seed: 42
+  train_instance_segmentation_only: false  # Train full SAM model
+  use_min_instance_sampler: false  # Disabled - full images always have instances
+  min_instances_per_patch: 1  # Not used when sampler disabled
+  min_instance_size: 1  # Keep all objects ≥1 pixel (effectively no filtering)
+  checkpoint_name: "full_image_vit_b_a40_test"
+  resume_from_checkpoint: null
+  export_path: "final_models/full_image_vit_b_a40_test.pt"

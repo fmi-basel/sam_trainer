@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sam_trainer"
+version = "0.1.0"
+description = "Training and inference tools for SAM models"
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [{ name = "Niklas Khoss", email = "niklas.khoss@fmi.ch" }]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["sam_trainer*"]

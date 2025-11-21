@@ -86,6 +86,7 @@ Thumbs.db
 # Project-specific data and output directories
 dat/
 runs/
+external/
 final_models/
 infrastructure/
 logs/

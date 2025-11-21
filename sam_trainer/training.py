@@ -20,6 +20,15 @@ from sam_trainer.io import get_image_paths
 
 logger = logging.getLogger(__name__)
 
+# TODO Add a global var for where to save new models downloaded during the run. Potentially outside of the script here
+
+
+# NOTE: The "No foreground objects" error is caused by micro_sam's internal target
+# preparation being stricter than MinInstanceSampler. The solution is to:
+# 1. Use very permissive sampler settings (min_instances=1, min_size=15)
+# 2. Increase n_samples significantly to provide many retry attempts
+# 3. Disable validation sampler entirely for full SAM training
+
 
 class PercentileNormalizer:
     def __init__(self, lower: float, upper: float):
@@ -117,6 +126,7 @@ def run_training(config: TrainingConfig, output_dir: Path) -> dict[str, Path]:
     Returns:
         Dictionary with paths to checkpoint and exported model
     """
+
     logger.info("Starting SAM training...")
     logger.info(f"Model type: {config.model_type}")
     logger.info(f"Patch shape: {config.patch_shape}")
@@ -167,13 +177,12 @@ def run_training(config: TrainingConfig, output_dir: Path) -> dict[str, Path]:
             config.min_instances_per_patch,
             min_size=config.min_instance_size,
         )
-        if not config.train_instance_segmentation_only:
-            val_sampler = MinInstanceSampler(
-                config.min_instances_per_patch,
-                min_size=config.min_instance_size,
-            )
+        val_sampler = MinInstanceSampler(
+            config.min_instances_per_patch,
+            min_size=config.min_instance_size,
+        )
         logger.info(
-            "Using MinInstanceSampler (min_instances=%s, min_size=%s)",
+            "Using MinInstanceSampler (min_instances=%s, min_size=%s) for both train and validation",
             config.min_instances_per_patch,
             config.min_instance_size,
         )
@@ -226,11 +235,21 @@ def run_training(config: TrainingConfig, output_dir: Path) -> dict[str, Path]:
         base_kwargs["checkpoint_path"] = str(config.resume_from_checkpoint)
 
     # Run training
+    logger.debug(
+        f"Using train_instance_segmentation_only: {config.train_instance_segmentation_only}"
+    )
     logger.info("Starting training loop...")
+
     if config.train_instance_segmentation_only:
         train_instance_segmentation(**base_kwargs)
     else:
-        train_sam(with_segmentation_decoder=True, **base_kwargs)
+        # Only override verify_n_labels_in_loader to skip pre-training validation
+        # Don't override n_objects_per_batch - let it use default behavior (25 with smart subsampling)
+        train_sam(
+            with_segmentation_decoder=True,
+            verify_n_labels_in_loader=None,
+            **base_kwargs,
+        )
 
     # Export model
     best_checkpoint = checkpoint_dir / "best.pt"
