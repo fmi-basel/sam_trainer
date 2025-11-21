@@ -63,8 +63,8 @@ def load_model_with_decoder(model_path: str, model_type: str, device: str) -> tu
     from micro_sam.instance_segmentation import get_decoder
     from micro_sam.util import get_sam_model
 
-    # Load the checkpoint
-    checkpoint = torch.load(model_path, map_location=device)
+    # Load the checkpoint (weights_only=False needed for PyTorch 2.6+ with training checkpoints)
+    checkpoint = torch.load(model_path, map_location=device, weights_only=False)
 
     # Extract SAM model state (remove decoder_state)
     model_state = {k: v for k, v in checkpoint.items() if k != "decoder_state"}
@@ -333,7 +333,9 @@ def main(
             tile_shape_tuple = tuple(map(int, tile_shape.split(",")))
             if len(tile_shape_tuple) != 2:
                 raise ValueError
-            console.print(f"[cyan]Tiling mode:[/cyan] Using tiles of shape {tile_shape_tuple}")
+            console.print(
+                f"[cyan]Tiling mode:[/cyan] Using tiles of shape {tile_shape_tuple}"
+            )
         except ValueError:
             console.print(
                 "[bold red]Error:[/bold red] tile-shape must be two integers separated by comma (e.g., '512,512')"

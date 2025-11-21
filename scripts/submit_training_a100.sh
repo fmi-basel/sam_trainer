@@ -1,15 +1,15 @@
 #!/bin/bash
 #SBATCH --account=dlthings
-#SBATCH --job-name=sam_train_a100
+#SBATCH --job-name=full_img_sam_train_a100
 #SBATCH --cpus-per-task=20
 #SBATCH --ntasks=1
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
 #SBATCH --partition=main
-#SBATCH --mem=100G
+#SBATCH --mem=150G
 #SBATCH --gres=gpu:1
 #SBATCH --constraint="infiniband&gpuram80gb"
-#SBATCH --time=48:00:00
+#SBATCH --time=56:00:00
 #SBATCH --output=logs/%x-%j.out
 #SBATCH --error=logs/%x-%j.err
 

@@ -134,6 +134,7 @@ def run_training(config: TrainingConfig, output_dir: Path) -> dict[str, Path]:
     logger.info(f"Number of samples: {config.n_samples}")
     logger.info(f"Number of epochs: {config.n_epochs}")
     logger.info(f"Learning rate: {config.learning_rate:.2e}")
+    logger.info(f"Early stopping after: {config.early_stopping} epochs")
     logger.info(f"Validation split: {config.val_split:.2f}")
     logger.info(f"Number of workers: {config.num_workers}")
 
@@ -227,6 +228,7 @@ def run_training(config: TrainingConfig, output_dir: Path) -> dict[str, Path]:
         "val_loader": val_loader,
         "n_epochs": config.n_epochs,
         "lr": config.learning_rate,
+        "early_stopping": config.early_stopping,
         "save_root": str(output_dir),
     }
 

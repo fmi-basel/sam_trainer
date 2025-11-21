@@ -88,6 +88,11 @@ class TrainingConfig(BaseModel):
         description="Number of dataloader workers for parallel data loading (0=single-threaded)",
     )
     learning_rate: float = Field(default=1e-5, gt=0, description="Learning rate")
+    early_stopping: int = Field(
+        default=10,
+        ge=1,
+        description="Early stopping patience: number of epochs without improvement before stopping",
+    )
     val_split: float = Field(
         default=0.1, gt=0, lt=1, description="Validation split ratio"
     )
