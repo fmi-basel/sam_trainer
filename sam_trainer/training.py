@@ -17,6 +17,10 @@ from torch_em.data import MinInstanceSampler
 
 from sam_trainer.config import TrainingConfig
 from sam_trainer.io import get_image_paths
+from sam_trainer.visualization import (
+    create_predictor_and_segmenter,
+    save_validation_predictions,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -242,6 +246,15 @@ def run_training(config: TrainingConfig, output_dir: Path) -> dict[str, Path]:
     )
     logger.info("Starting training loop...")
 
+    # Setup validation prediction saving callback if enabled
+    if config.save_validation_predictions_frequency is not None:
+        logger.info(
+            f"Will save validation predictions every {config.save_validation_predictions_frequency} epochs"
+        )
+        # Note: micro_sam trainers don't support callbacks directly,
+        # so we'll save predictions after training completes
+        # For real-time predictions during training, would need to modify micro_sam or use custom trainer
+
     if config.train_instance_segmentation_only:
         train_instance_segmentation(**base_kwargs)
     else:
@@ -252,6 +265,33 @@ def run_training(config: TrainingConfig, output_dir: Path) -> dict[str, Path]:
             verify_n_labels_in_loader=None,
             **base_kwargs,
         )
+
+    # Save final validation predictions if enabled
+    if config.save_validation_predictions_frequency is not None:
+        try:
+            logger.info("Creating final validation predictions...")
+
+            # Load best checkpoint
+            best_checkpoint = checkpoint_dir / "best.pt"
+            if best_checkpoint.exists():
+                # Load model and create predictor/segmenter
+                predictor, segmenter = create_predictor_and_segmenter(
+                    checkpoint_path=best_checkpoint,
+                    model_type=config.model_type,
+                    device=device,
+                )
+
+                # Save predictions for final epoch
+                save_validation_predictions(
+                    predictor=predictor,
+                    segmenter=segmenter,
+                    val_images=val_images,
+                    output_dir=output_dir,
+                    epoch=config.n_epochs,
+                    max_samples=5,
+                )
+        except Exception as e:
+            logger.warning(f"Failed to save final validation predictions: {e}")
 
     # Export model
     best_checkpoint = checkpoint_dir / "best.pt"

@@ -1,9 +1,9 @@
-experiment_name: "full_img_vit_b_a100_lr-1e-5_full_run"
+experiment_name: "day8_whole_img_lr1-e5"
 output_base_dir: "runs"
 augmentation: null
 training:
-  images_dir: "dat/augmented_training_data/images"
-  labels_dir: "dat/augmented_training_data/labels"
+  images_dir: "dat/day_8_aug/images"
+  labels_dir: "dat/day_8_aug/labels"
   model_type: "vit_b_lm"
   patch_shape: [2048, 2048]  # Full image size - no cropping/patching
   batch_size: 6  # Increased from 1 - plenty of GPU memory available (only using 13GB/80GB)
@@ -11,7 +11,7 @@ training:
   n_samples: null  # null = use actual dataset size (all images, no random sampling)
   num_workers: 12  # Increased from 4 to utilize available CPUs (20 allocated)
   learning_rate: 1.0e-5
-  early_stopping: 100  # Allow 100 epochs without improvement before stopping (weekend run can explore plateaus)
+  early_stopping: 50  # Allow 100 epochs without improvement before stopping (weekend run can explore plateaus)
   val_split: 0.05
   shuffle_data: true
   shuffle_seed: 42
@@ -19,6 +19,7 @@ training:
   use_min_instance_sampler: false  # Disabled - full images always have instances
   min_instances_per_patch: 1  # Not used when sampler disabled
   min_instance_size: 1  # Keep all objects ≥1 pixel (effectively no filtering)
-  checkpoint_name: "full_image_vit_b_a100_lr-1e-5_full_run"
+  save_validation_predictions_frequency: 1
+  checkpoint_name: "day_8_whole-img_1e-5_full_run"
   resume_from_checkpoint: null
-  export_path: "final_models/full_image_vit_b_a100_lr-1e-5_full_run.pt"
+  export_path: "final_models/day_8_whole-img_1e-5_full_run.pt"

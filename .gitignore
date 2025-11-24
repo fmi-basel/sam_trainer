@@ -87,6 +87,7 @@ Thumbs.db
 dat/
 runs/
 external/
+inference_test/
 final_models/
 infrastructure/
 logs/

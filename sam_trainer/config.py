@@ -144,6 +144,11 @@ class TrainingConfig(BaseModel):
     resume_from_checkpoint: Optional[Path] = Field(
         default=None, description="Path to checkpoint to resume from"
     )
+    save_validation_predictions_frequency: Optional[int] = Field(
+        default=None,
+        ge=1,
+        description="Save validation predictions every N epochs for visualization (None=disabled)",
+    )
 
     # Output configuration
     export_path: Optional[Path] = Field(
