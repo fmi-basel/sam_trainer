@@ -288,7 +288,7 @@ def run_training(config: TrainingConfig, output_dir: Path) -> dict[str, Path]:
                     val_images=val_images,
                     output_dir=output_dir,
                     epoch=config.n_epochs,
-                    max_samples=5,
+                    max_samples=20,
                 )
         except Exception as e:
             logger.warning(f"Failed to save final validation predictions: {e}")

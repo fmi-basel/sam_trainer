@@ -200,20 +200,25 @@ def run_inference_on_image(
     Returns:
         Instance segmentation masks
     """
+    generate_kwargs = generate_kwargs or {}
+
     if use_decoder:
         # Use decoder-based instance segmentation
         # Initialize with the image first (required by InstanceSegmentationWithDecoder)
         segmenter.initialize(image)
-        predictions = segmenter.generate(image)
+        if isinstance(segmenter, InstanceSegmentationWithDecoder):
+            # Note: generate() does not accept 'image' as argument
+            predictions = segmenter.generate(**generate_kwargs)  # type: ignore
 
-        # Convert predictions (list of dicts with masks) to label image
-        masks = np.zeros(image.shape, dtype=np.uint16)
-        for idx, pred in enumerate(predictions, start=1):
-            mask = pred["segmentation"]
-            masks[mask > 0] = idx
+            # Convert predictions (list of dicts with masks) to label image
+            masks = np.zeros(image.shape, dtype=np.uint16)
+            for idx, pred in enumerate(predictions, start=1):
+                mask = pred["segmentation"]
+                masks[mask > 0] = idx
+        else:
+            raise ValueError("Segmenter must be InstanceSegmentationWithDecoder when use_decoder=True")
     else:
         # Use AMG-based automatic instance segmentation (handles normalization internally)
-        generate_kwargs = generate_kwargs or {}
         masks = automatic_instance_segmentation(
             predictor=predictor,
             segmenter=segmenter,
@@ -303,6 +308,16 @@ def main(
         "--border-margin",
         help="Discard instances that touch the border within this many pixels",
     ),
+    # AIS specific arguments
+    center_dist_thresh: float = typer.Option(
+        0.5, "--center-dist-thresh", help="Center distance threshold (AIS only)"
+    ),
+    boundary_dist_thresh: float = typer.Option(
+        0.5, "--boundary-dist-thresh", help="Boundary distance threshold (AIS only)"
+    ),
+    foreground_thresh: float = typer.Option(
+        0.5, "--foreground-thresh", help="Foreground threshold (AIS only)"
+    ),
     verbose: int = typer.Option(
         0, "--verbose", "-v", count=True, help="Increase logging verbosity"
     ),
@@ -388,7 +403,14 @@ def main(
             raise typer.Exit(1)
 
     generate_kwargs: Dict[str, Any] = {}
-    if not use_decoder:
+    
+    if use_decoder:
+        # AIS parameters
+        generate_kwargs["center_distance_threshold"] = center_dist_thresh
+        generate_kwargs["boundary_distance_threshold"] = boundary_dist_thresh
+        generate_kwargs["foreground_threshold"] = foreground_thresh
+    else:
+        # AMG parameters
         if pred_iou_thresh is not None:
             generate_kwargs["pred_iou_thresh"] = pred_iou_thresh
         if stability_score_thresh is not None:

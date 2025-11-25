@@ -1,12 +1,12 @@
-experiment_name: "day8_whole_img_lr5-e5"
+experiment_name: "day8_vit_l_whole_img_lr5-e5"
 output_base_dir: "runs"
 augmentation: null
 training:
   images_dir: "dat/day_8_aug/images"
   labels_dir: "dat/day_8_aug/labels"
-  model_type: "vit_b_lm"
+  model_type: "vit_l_lm"
   patch_shape: [2048, 2048]  # Full image size - no cropping/patching
-  batch_size: 6  # Increased from 1 - plenty of GPU memory available (only using 13GB/80GB)
+  batch_size: 2  # Increased from 1 - plenty of GPU memory available (only using 13GB/80GB)
   n_epochs: 200  # Longer training since we see each image once per epoch
   n_samples: null  # null = use actual dataset size (all images, no random sampling)
   num_workers: 12  # Increased from 4 to utilize available CPUs (20 allocated)
@@ -20,5 +20,5 @@ training:
   min_instances_per_patch: 1  # Not used when sampler disabled
   min_instance_size: 1  # Keep all objects ≥1 pixel (effectively no filtering)
   save_validation_predictions_frequency: 1
-  checkpoint_name: "day_8_whole-img_5e-5_full_run"
+  checkpoint_name: "day_8_whole-img_vit-l_5e-5_full_run"
   resume_from_checkpoint: null

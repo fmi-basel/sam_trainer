@@ -12,7 +12,9 @@ from matplotlib.colors import ListedColormap
 
 # Use non-interactive backend for saving plots without display
 matplotlib.use("Agg")
-
+# Suppress verbose matplotlib debug logs
+logging.getLogger("matplotlib").setLevel(logging.WARNING)
+logging.getLogger("PIL").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
 

@@ -136,6 +136,20 @@ training:
   # ... other settings
 ```
 
+### Inference
+
+Run the bash script on the cluster or run `run_inference.py` directly:
+
+```bash
+sbatch scripts/submit_inference.sh \
+    runs/my_experiment/checkpoints/best.pt \
+    dat/test_images/ \
+    runs/my_experiment/predictions/ \
+    --use-decoder \
+    --center-dist-thresh 0.4 \
+    --boundary-dist-thresh 0.4
+```
+
 ## Configuration Reference
 
 ### Augmentation Config
