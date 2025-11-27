@@ -22,7 +22,6 @@ from ngio import open_ome_zarr_plate
 from ngio.experimental.iterators import SegmentationIterator
 from rich.console import Console
 from rich.logging import RichHandler
-from rich.progress import Progress, SpinnerColumn, TextColumn
 
 app = typer.Typer(
     name="sam-inference-ngio",
@@ -117,7 +116,6 @@ def process_well(well_image_container, predictor, segmenter, device):
     # Process each well and image
     # Get image data as numpy array
     image_data = well_image_container.get_image()
-    logger.debug(f"Image shape: {image_data.shape}")
     logger.info(f"Image shape: {image_data.shape}")
     label = well_image_container.derive_label("sam_labels", overwrite=True)
     seg = SegmentationIterator(input_image=image_data, output_label=label)
@@ -126,7 +124,7 @@ def process_well(well_image_container, predictor, segmenter, device):
         mask = segment_image(img, predictor, segmenter)
         lbl(patch=mask.astype(np.uint8))
 
-        logger.debug(f"Found {len(np.unique(mask)) - 1} instances in patch")
+        logger.info(f"Found {len(np.unique(mask)) - 1} instances in patch")
 
 
 def process_wells(plate, predictor, segmenter, device):
@@ -134,37 +132,35 @@ def process_wells(plate, predictor, segmenter, device):
     wells = list(plate.get_wells().keys())
     console.print(f"[cyan]Found {len(wells)} wells to process[/cyan]")
 
-    with Progress(
-        SpinnerColumn(),
-        TextColumn("[progress.description]{task.description}"),
-        console=console,
-    ) as progress:
-        task = progress.add_task("[cyan]Processing wells...", total=len(wells))
+    # with Progress(
+    #     SpinnerColumn(),
+    #     TextColumn("[progress.description]{task.description}"),
+    #     console=console,
+    # ) as progress:
+    #     task = progress.add_task("[cyan]Processing wells...", total=len(wells))
 
-        for well_id in wells:
-            progress.update(task, description=f"[cyan]Processing well {well_id}...")
+    for well_id in wells:
+        # progress.update(task, description=f"[cyan]Processing well {well_id}...")
 
-            try:
-                # Get the image for this well (assuming one image per well)
-                well_image_container = plate.get_image(
-                    row=well_id[0], column=int(well_id[2:]), image_path="0"
-                )
-                logger.debug(f"Processing well {well_id}")
-                process_well(
-                    well_image_container=well_image_container,
-                    predictor=predictor,
-                    segmenter=segmenter,
-                    device=device,
-                )
-                progress.advance(task)
+        try:
+            # Get the image for this well (assuming one image per well)
+            well_image_container = plate.get_image(
+                row=well_id[0], column=int(well_id[2:]), image_path="0"
+            )
+            logger.info(f"Processing well {well_id}")
+            process_well(
+                well_image_container=well_image_container,
+                predictor=predictor,
+                segmenter=segmenter,
+                device=device,
+            )
+            # progress.advance(task)
 
-            except Exception as e:
-                console.print(
-                    f"[yellow]⚠[/yellow] Error processing well {well_id}: {e}"
-                )
-                logger.exception(f"Failed to process well {well_id}")
-                progress.advance(task)
-            continue
+        except Exception as e:
+            console.print(f"[yellow]⚠[/yellow] Error processing well {well_id}: {e}")
+            logger.exception(f"Failed to process well {well_id}")
+            # progress.advance(task)
+        continue
 
 
 def process_hcs_plate(

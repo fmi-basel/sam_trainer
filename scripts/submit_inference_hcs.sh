@@ -8,23 +8,27 @@
 #SBATCH --nodes=1
 #SBATCH --mem=32G
 #SBATCH --gres=gpu:1
-#SBATCH --partition=main,several,short
-#SBATCH --time=04:00:00
+#SBATCH --partition=main,several
+#SBATCH --time=08:00:00
 
 # USAGE:
-# 1. To submit a SINGLE plate directly:
+# 1. To submit a SINGLE plate:
 #    sbatch scripts/submit_inference_hcs.sh /path/to/plate.zarr
 #
-# 2. To submit ALL plates in a folder (Parallel):
-#    ./scripts/submit_inference_hcs.sh /path/to/parent_folder --submit-all
+# 2. To submit ALL plates in a parent folder (sequential processing):
+#    sbatch scripts/submit_inference_hcs.sh /path/to/parent_folder --all
 
 INPUT_PATH="$1"
 MODE="${2:-}"
 
+# Check if input path is provided
+if [[ -z "$INPUT_PATH" ]]; then
+    echo "Error: No input path provided"
+    echo "Usage: sbatch scripts/submit_inference_hcs.sh <path> [--all]"
+    exit 1
+fi
+
 # Activate environment
-# Assuming pixi is available or environment is already set up
-# If using pixi run, the python command below changes to `pixi run python ...`
-# Ensure Pixi (local install) is available in the job environment
 WD="$(pwd)"
 export PATH="$PATH:$WD/infrastructure/apps/pixi/bin"
 export PIXI_CACHE_DIR="$WD/infrastructure/apps/pixi/.pixi_cache"
@@ -37,35 +41,53 @@ if [[ ! -x "$PIXIBIN" ]]; then
     bash "$WD/install.sh"
 fi
 
-# Force Pixi to use existing environment without checking for updates
-# This prevents network access attempts when lock file has changed
-export PIXI_FROZEN=true
-export PIXI_LOCKED=true
+echo "[INFO] Using existing Pixi environment"
+echo "[INFO] Job ID: $SLURM_JOB_ID"
+echo "[INFO] Node: $SLURMD_NODENAME"
 
-echo "[INFO] Using existing Pixi environment (frozen mode - no network updates)"
-
-# Run the appropriate mode
-
-if [[ "$MODE" == "--submit-all" ]]; then
-    # MASTER MODE: Loop through folder and submit jobs
-    echo "Searching for .zarr plates in $INPUT_PATH..."
+# MODE 1: Process all .zarr plates in parent folder sequentially
+if [[ "$MODE" == "--all" ]]; then
+    echo "[INFO] Processing all .zarr plates in $INPUT_PATH sequentially..."
     
     # Find all directories ending in .zarr
-    find "$INPUT_PATH" -maxdepth 1 -type d -name "*.zarr" | while read plate; do
-        echo "Submitting job for plate: $plate"
-        sbatch scripts/submit_inference_.sh "$plate"
+    zarr_plates=($(find "$INPUT_PATH" -maxdepth 1 -type d -name "*.zarr"))
+    plate_count=${#zarr_plates[@]}
+    
+    if [[ $plate_count -eq 0 ]]; then
+        echo "Error: No .zarr plates found in $INPUT_PATH"
+        exit 1
+    fi
+    
+    echo "[INFO] Found $plate_count plates to process"
+    
+    for plate in "${zarr_plates[@]}"; do
+        echo ""
+        echo "[INFO] Processing plate: $plate"
+        pixi run -e gpu python sam_trainer/run_inference_ngio.py \
+            --input "$plate"
+            # -v
+        
+        if [[ $? -ne 0 ]]; then
+            echo "[WARNING] Error processing $plate, continuing with next..."
+        fi
     done
-    exit 0
+    
+    echo ""
+    echo "[INFO] All plates processed."
+
+# MODE 2: Process single .zarr plate
+else
+    echo "[INFO] Processing single plate: $INPUT_PATH"
+    
+    if [[ ! -d "$INPUT_PATH" ]]; then
+        echo "Error: Input path does not exist or is not a directory: $INPUT_PATH"
+        exit 1
+    fi
+    
+    pixi run -e gpu python sam_trainer/run_inference_ngio.py \
+        --input "$INPUT_PATH" \
+        -v
 fi
 
-# WORKER MODE: Process a single plate
-echo "Running inference on plate: $INPUT_PATH"
-echo "Job ID: $SLURM_JOB_ID"
-echo "Node: $SLURMD_NODENAME"
-
-# Run the python script
-# Using 'pixi run' to ensure environment is correct
-pixi run -e gpu python sam_trainer/run_inference_ngio.py \
-    --input "$INPUT_PATH"
-
-echo "Job finished."
+echo ""
+echo "[INFO] Job finished."
