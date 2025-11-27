@@ -53,7 +53,7 @@ if [[ "$MODE" == "--submit-all" ]]; then
     # Find all directories ending in .zarr
     find "$INPUT_PATH" -maxdepth 1 -type d -name "*.zarr" | while read plate; do
         echo "Submitting job for plate: $plate"
-        sbatch scripts/submit_inference_hcs.sh "$plate"
+        sbatch scripts/submit_inference_.sh "$plate"
     done
     exit 0
 fi
@@ -65,7 +65,7 @@ echo "Node: $SLURMD_NODENAME"
 
 # Run the python script
 # Using 'pixi run' to ensure environment is correct
-pixi run -e gpu python scripts/run_inference_hcs.py \
+pixi run -e gpu python scripts/run_inference_ngio.py \
     --input "$INPUT_PATH"
 
 echo "Job finished."
