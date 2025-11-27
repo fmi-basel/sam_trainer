@@ -24,6 +24,7 @@ numpy = ">=1.24"
 scikit-image = ">=0.22"
 albumentations = ">=1.4.0"
 rich = ">=13.0"
+ngio = ">=0.4.4,<0.5"
 
 [pypi-dependencies]
 sam_trainer = { path = ".", editable = true }

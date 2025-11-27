@@ -13,8 +13,9 @@ import numpy as np
 import torch
 from micro_sam.automatic_segmentation import (
     automatic_instance_segmentation,
-    get_predictor_and_segmenter,
 )
+from micro_sam.instance_segmentation import InstanceSegmentationWithDecoder, get_decoder
+from micro_sam.util import get_sam_model
 from ome_zarr.io import parse_url
 from ome_zarr.reader import Reader
 from ome_zarr.writer import write_labels
@@ -29,7 +30,60 @@ logger = logging.getLogger(__name__)
 
 # Default model path on the cluster
 # DEFAULT_MODEL_PATH = "/tachyon/groups/scratch/gmicro/khosnikl/projects/sam_trainer/sam_trainer/runs/full_img_vit_b_a100_lr-1e-5_full_run/checkpoints/full_image_vit_b_a100_lr-1e-5_full_run/best.pt"
-DEFAULT_MODEL_PATH = Path(r"C:\Repos\model_zoo\full_image_vit_b_a100_lr-1e5_full_run\best.pt")
+DEFAULT_MODEL_PATH = Path(
+    r"C:\Repos\model_zoo\full_image_vit_b_a100_lr-1e5_full_run\best.pt"
+)
+INPUT = Path(r"C:\Repos\sam_trainer\dat\test_zarr\exp164-diff0.zarr")
+
+
+def load_model_with_decoder(model_path: str, model_type: str, device: str) -> tuple:
+    """Load an exported model that includes decoder state.
+
+    Args:
+        model_path: Path to exported model checkpoint
+        model_type: SAM model type
+        device: Device to load on
+
+    Returns:
+        Tuple of (predictor, segmenter)
+    """
+    # Load the checkpoint with weights_only=True to avoid unpickling issues
+    # This loads only tensors, avoiding module references
+    try:
+        checkpoint = torch.load(model_path, map_location=device, weights_only=True)
+    except Exception as e:
+        logger.warning(f"Failed to load with weights_only=True, trying weights_only=False: {e}")
+        # If that fails, we need to add the parent directory to sys.path temporarily
+        # so that sam_trainer module can be found during unpickling
+        script_dir = Path(__file__).parent.parent
+        if str(script_dir) not in sys.path:
+            sys.path.insert(0, str(script_dir))
+        checkpoint = torch.load(model_path, map_location=device, weights_only=False)
+
+    # Extract SAM model state (remove decoder_state)
+    model_state = {k: v for k, v in checkpoint.items() if k != "decoder_state"}
+
+    # Load SAM model
+    predictor = get_sam_model(
+        model_type=model_type,
+        checkpoint_path=None,  # We'll load state manually
+        device=device,
+        return_sam=False,
+    )
+    sam = predictor.model
+    sam.load_state_dict(model_state, strict=False)
+
+    # Load decoder with the image encoder
+    decoder = get_decoder(
+        image_encoder=sam.image_encoder,
+        decoder_state=checkpoint["decoder_state"],
+        device=device,
+    )
+
+    # Create segmenter
+    segmenter = InstanceSegmentationWithDecoder(predictor, decoder)
+
+    return predictor, segmenter
 
 
 def process_image_node(node, predictor, segmenter, device):
@@ -57,9 +111,9 @@ def process_image_node(node, predictor, segmenter, device):
     prediction = automatic_instance_segmentation(
         predictor=predictor,
         segmenter=segmenter,
-        input_path=None,  # We pass data directly
+        input_path=inference_image,  # We pass data directly
         ndim=2,  # Force 2D segmentation
-        image=inference_image,
+        # image=inference_image,
         device=device,
         verbose=False,
     )
@@ -114,13 +168,19 @@ def process_plate(plate_path: Path, model_path: Path, device):
     # Load Model (AMG Mode)
     logger.info(f"Loading model from: {model_path}")
     try:
-        predictor, segmenter = get_predictor_and_segmenter(
-            model_type="vit_b_lm",  # Assuming model type based on path
-            checkpoint=model_path,
+        # predictor, segmenter = get_predictor_and_segmenter(
+        #     model_type="vit_b_lm",  # Assuming model type based on path
+        #     checkpoint=model_path,
+        #     device=device,
+        #     amg=True,  # Use AMG mode
+        #     is_custom_model=True,  # It's a finetuned model
+        # )
+        predictor, segmenter = load_model_with_decoder(
+            model_path=str(model_path),
+            model_type="vit_b_lm",
             device=device,
-            amg=True,  # Use AMG mode
-            is_custom_model=True,  # It's a finetuned model
         )
+
     except Exception as e:
         logger.error(f"Failed to load model: {e}")
         return
@@ -151,8 +211,9 @@ def main():
     parser.add_argument(
         "-i",
         "--input",
-        type=str,
-        required=True,
+        type=Path,
+        default=INPUT,
+        # required=True,
         help="Path to the OME-Zarr plate (e.g., path/to/plate.zarr)",
     )
     parser.add_argument(

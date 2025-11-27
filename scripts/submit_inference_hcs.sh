@@ -8,7 +8,7 @@
 #SBATCH --nodes=1
 #SBATCH --mem=32G
 #SBATCH --gres=gpu:a40:1
-#SBATCH --partition=main
+#SBATCH --partition=main,several,short
 #SBATCH --time=04:00:00
 
 # USAGE:
@@ -24,6 +24,27 @@ MODE="${2:-}"
 # Activate environment
 # Assuming pixi is available or environment is already set up
 # If using pixi run, the python command below changes to `pixi run python ...`
+# Ensure Pixi (local install) is available in the job environment
+WD="$(pwd)"
+export PATH="$PATH:$WD/infrastructure/apps/pixi/bin"
+export PIXI_CACHE_DIR="$WD/infrastructure/apps/pixi/.pixi_cache"
+export TMPDIR="$WD/infrastructure/.tmp_$USER"
+mkdir -p "$TMPDIR"
+
+PIXIBIN="$WD/infrastructure/apps/pixi/bin/pixi"
+if [[ ! -x "$PIXIBIN" ]]; then
+    echo "[INFO] Pixi binary not found; running install.sh"
+    bash "$WD/install.sh"
+fi
+
+# Force Pixi to use existing environment without checking for updates
+# This prevents network access attempts when lock file has changed
+export PIXI_FROZEN=true
+export PIXI_LOCKED=true
+
+echo "[INFO] Using existing Pixi environment (frozen mode - no network updates)"
+
+# Run the appropriate mode
 
 if [[ "$MODE" == "--submit-all" ]]; then
     # MASTER MODE: Loop through folder and submit jobs
