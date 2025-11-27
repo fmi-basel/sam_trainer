@@ -28,8 +28,8 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Default model path on the cluster
-DEFAULT_MODEL_PATH = "/tachyon/groups/scratch/gmicro/khosnikl/projects/sam_trainer/sam_trainer/runs/full_img_vit_b_a100_lr-1e-5_full_run/checkpoints/full_image_vit_b_a100_lr-1e-5_full_run/best.pt"
-DEFAULT_MODEL_PATH = r"C:\Repos\model_zoo\full_image_vit_b_a100_lr-1e5_full_run\best.pt"
+# DEFAULT_MODEL_PATH = "/tachyon/groups/scratch/gmicro/khosnikl/projects/sam_trainer/sam_trainer/runs/full_img_vit_b_a100_lr-1e-5_full_run/checkpoints/full_image_vit_b_a100_lr-1e-5_full_run/best.pt"
+DEFAULT_MODEL_PATH = Path(r"C:\Repos\model_zoo\full_image_vit_b_a100_lr-1e5_full_run\best.pt")
 
 
 def process_image_node(node, predictor, segmenter, device):
@@ -158,7 +158,7 @@ def main():
     parser.add_argument(
         "-m",
         "--model",
-        type=str,
+        type=Path,
         default=DEFAULT_MODEL_PATH,
         help="Path to the model checkpoint",
     )
