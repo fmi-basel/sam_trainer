@@ -65,7 +65,7 @@ echo "Node: $SLURMD_NODENAME"
 
 # Run the python script
 # Using 'pixi run' to ensure environment is correct
-pixi run -e gpu python scripts/run_inference_ngio.py \
+pixi run -e gpu python sam_trainer/run_inference_ngio.py \
     --input "$INPUT_PATH"
 
 echo "Job finished."
