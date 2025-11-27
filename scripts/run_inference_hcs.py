@@ -7,6 +7,7 @@ import argparse
 import logging
 import os
 import sys
+from pathlib import Path
 
 import numpy as np
 import torch
@@ -28,6 +29,7 @@ logger = logging.getLogger(__name__)
 
 # Default model path on the cluster
 DEFAULT_MODEL_PATH = "/tachyon/groups/scratch/gmicro/khosnikl/projects/sam_trainer/sam_trainer/runs/full_img_vit_b_a100_lr-1e-5_full_run/checkpoints/full_image_vit_b_a100_lr-1e-5_full_run/best.pt"
+DEFAULT_MODEL_PATH = r"C:\Repos\model_zoo\full_image_vit_b_a100_lr-1e5_full_run\best.pt"
 
 
 def process_image_node(node, predictor, segmenter, device):
@@ -81,7 +83,7 @@ def process_image_node(node, predictor, segmenter, device):
     image_group = node.zarr
 
     # Define label name
-    label_name = "segmentation"
+    label_name = "labels"
 
     # write_labels helper from ome_zarr handles creating the 'labels' group and metadata
     # It will write the data to the group.
@@ -91,7 +93,7 @@ def process_image_node(node, predictor, segmenter, device):
     logger.info(f"  Saved labels to group: 'labels/{label_name}'")
 
 
-def process_plate(plate_path, model_path, device):
+def process_plate(plate_path: Path, model_path: Path, device):
     """Traverse the HCS plate and process all images."""
     logger.info(f"Opening plate: {plate_path}")
 
