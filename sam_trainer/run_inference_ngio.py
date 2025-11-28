@@ -163,19 +163,37 @@ def process_wells(plate, predictor, segmenter, device):
         continue
 
 
-def process_hcs_plate(
-    input_plate: Path, model_path: Path, model_type: str, device: str
-) -> None:
-    # Open the HCS plate
-    console.print(f"[cyan]Opening plate:[/cyan] {input_plate}")
+def process_single_plate(plate_path: Path, predictor, segmenter, device: str) -> None:
+    """Process a single HCS plate."""
+    console.print(f"\n[cyan]Opening plate:[/cyan] {plate_path}")
     try:
-        plate = open_ome_zarr_plate(input_plate)
+        plate = open_ome_zarr_plate(plate_path)
         console.print(f"[green]✓[/green] Plate opened: {plate}")
     except Exception as e:
         console.print(f"[bold red]Error opening plate:[/bold red] {e}")
-        raise typer.Exit(1)
+        logger.exception(f"Failed to open plate {plate_path}")
+        return
 
-    # Load model
+    try:
+        process_wells(plate, predictor, segmenter, device)
+        console.print(f"[green]✓[/green] Plate complete: {plate_path}")
+    except Exception as e:
+        console.print(f"[bold red]Error processing plate:[/bold red] {e}")
+        logger.exception(f"Failed to process plate {plate_path}")
+
+
+def process_hcs_plates(
+    input_path: Path, model_path: Path, model_type: str, device: str
+) -> None:
+    """Process either a single plate or all plates in a directory.
+
+    Args:
+        input_path: Path to a single .zarr plate or parent directory containing plates
+        model_path: Path to model checkpoint
+        model_type: SAM model type
+        device: Device to use
+    """
+    # Load model once
     console.print(f"[cyan]Loading model:[/cyan] {model_path}")
     try:
         predictor, segmenter = load_model_with_decoder(
@@ -189,13 +207,36 @@ def process_hcs_plate(
         logger.exception("Model loading failed")
         raise typer.Exit(1)
 
-    process_wells(plate, predictor, segmenter, device)
+    # Determine if input is a single plate or parent directory
+    if input_path.name.endswith(".zarr"):
+        # Single plate
+        console.print("[cyan]Mode:[/cyan] Single plate processing")
+        process_single_plate(input_path, predictor, segmenter, device)
+    else:
+        # Parent directory - find all .zarr plates
+        console.print("[cyan]Mode:[/cyan] Batch processing")
+        zarr_plates = sorted(input_path.glob("*.zarr"))
+
+        if not zarr_plates:
+            console.print(
+                f"[bold red]Error:[/bold red] No .zarr plates found in {input_path}"
+            )
+            raise typer.Exit(1)
+
+        console.print(f"[cyan]Found {len(zarr_plates)} plates to process[/cyan]")
+
+        for i, plate_path in enumerate(zarr_plates, 1):
+            console.print(f"\n[cyan]Processing plate {i}/{len(zarr_plates)}[/cyan]")
+            process_single_plate(plate_path, predictor, segmenter, device)
 
 
 @app.command()
 def main(
     input_plate: Path = typer.Option(
-        ..., "--input", "-i", help="Path to HCS OME-Zarr plate (.zarr file)"
+        ...,
+        "--input",
+        "-i",
+        help="Path to HCS OME-Zarr plate (.zarr file) or parent directory containing plates",
     ),
     model_path: Path = typer.Option(
         "/tachyon/groups/scratch/gmicro/khosnikl/projects/sam_trainer/sam_trainer/runs/full_img_vit_b_a100_lr-1e-5_full_run/checkpoints/full_image_vit_b_a100_lr-1e-5_full_run/best.pt",
@@ -237,15 +278,14 @@ def main(
         device = "cuda" if torch.cuda.is_available() else "cpu"
     console.print(f"[cyan]Device:[/cyan] {device}")
 
-    process_hcs_plate(
-        input_plate=input_plate,
+    process_hcs_plates(
+        input_path=input_plate,
         model_path=model_path,
         model_type=model_type,
         device=device,
     )
 
-    console.print("\n[bold green]✓ Inference complete![/bold green]")
-    console.print(f"Labels saved in: {input_plate}")
+    console.print("\n[bold green]✓ All inference complete![/bold green]")
 
 
 if __name__ == "__main__":

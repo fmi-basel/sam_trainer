@@ -9,17 +9,16 @@
 #SBATCH --mem=32G
 #SBATCH --gres=gpu:1
 #SBATCH --partition=main,several
-#SBATCH --time=08:00:00
+#SBATCH --time=16:00:00
 
 # USAGE:
 # 1. To submit a SINGLE plate:
 #    sbatch scripts/submit_inference_hcs.sh /path/to/plate.zarr
 #
 # 2. To submit ALL plates in a parent folder (sequential processing):
-#    sbatch scripts/submit_inference_hcs.sh /path/to/parent_folder --all
+#    sbatch scripts/submit_inference_hcs.sh /path/to/parent_folder
 
 INPUT_PATH="$1"
-MODE="${2:-}"
 
 # Check if input path is provided
 if [[ -z "$INPUT_PATH" ]]; then
@@ -45,49 +44,17 @@ echo "[INFO] Using existing Pixi environment"
 echo "[INFO] Job ID: $SLURM_JOB_ID"
 echo "[INFO] Node: $SLURMD_NODENAME"
 
-# MODE 1: Process all .zarr plates in parent folder sequentially
-if [[ "$MODE" == "--all" ]]; then
-    echo "[INFO] Processing all .zarr plates in $INPUT_PATH sequentially..."
-    
-    # Find all directories ending in .zarr
-    zarr_plates=($(find "$INPUT_PATH" -maxdepth 1 -type d -name "*.zarr"))
-    plate_count=${#zarr_plates[@]}
-    
-    if [[ $plate_count -eq 0 ]]; then
-        echo "Error: No .zarr plates found in $INPUT_PATH"
-        exit 1
-    fi
-    
-    echo "[INFO] Found $plate_count plates to process"
-    
-    for plate in "${zarr_plates[@]}"; do
-        echo ""
-        echo "[INFO] Processing plate: $plate"
-        pixi run -e gpu python sam_trainer/run_inference_ngio.py \
-            --input "$plate"
-            # -v
-        
-        if [[ $? -ne 0 ]]; then
-            echo "[WARNING] Error processing $plate, continuing with next..."
-        fi
-    done
-    
-    echo ""
-    echo "[INFO] All plates processed."
-
-# MODE 2: Process single .zarr plate
-else
-    echo "[INFO] Processing single plate: $INPUT_PATH"
-    
-    if [[ ! -d "$INPUT_PATH" ]]; then
-        echo "Error: Input path does not exist or is not a directory: $INPUT_PATH"
-        exit 1
-    fi
-    
-    pixi run -e gpu python sam_trainer/run_inference_ngio.py \
-        --input "$INPUT_PATH" \
-        -v
+# Validate input path
+if [[ ! -d "$INPUT_PATH" ]]; then
+    echo "Error: Input path does not exist or is not a directory: $INPUT_PATH"
+    exit 1
 fi
+
+# Run inference (Python script handles both single plate and batch mode)
+echo "[INFO] Running inference on: $INPUT_PATH"
+pixi run -e gpu python sam_trainer/run_inference_ngio.py \
+    --input "$INPUT_PATH" \
+    -v
 
 echo ""
 echo "[INFO] Job finished."
