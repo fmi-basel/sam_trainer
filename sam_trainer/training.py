@@ -61,7 +61,6 @@ def _build_raw_transform(config: TrainingConfig):
     return PercentileNormalizer(lower, upper)
 
 
-# TODO adapt data split for OME-ZARR containers, which have labels inside the container (-> only 1 shuffling needed)
 def prepare_data_splits(
     images_dir: Path,
     labels_dir: Path,
@@ -136,33 +135,12 @@ def run_training(config: TrainingConfig, output_dir: Path) -> dict[str, Path]:
     logger.info(f"Validation split: {config.val_split:.2f}")
     logger.info(f"Number of workers: {config.num_workers}")
 
-    # Validate data directories exist before starting
-    if not config.images_dir.exists():
-        raise FileNotFoundError(
-            f"Images directory does not exist: {config.images_dir}\n"
-            "If using augmentation, make sure the augmentation step completed successfully."
-        )
-    if not config.labels_dir.exists():
-        raise FileNotFoundError(
-            f"Labels directory does not exist: {config.labels_dir}\n"
-            "If using augmentation, make sure the augmentation step completed successfully."
-        )
-
     # Check for GPU
     device = "cuda" if torch.cuda.is_available() else "cpu"
     logger.info(f"Using device: {device}")
 
     if device == "cpu":
         logger.warning("No GPU detected - training will be slow!")
-
-    # Prepare data splits
-    train_images, train_labels, val_images, val_labels = prepare_data_splits(
-        config.images_dir,
-        config.labels_dir,
-        config.val_split,
-        shuffle=config.shuffle_data,
-        seed=config.shuffle_seed,
-    )
 
     # Create data loaders
     logger.info("Creating data loaders...")
@@ -185,9 +163,8 @@ def run_training(config: TrainingConfig, output_dir: Path) -> dict[str, Path]:
             config.min_instances_per_patch,
             config.min_instance_size,
         )
+
     loader_kwargs = {
-        "raw_key": None,
-        "label_key": None,
         "batch_size": config.batch_size,
         "patch_shape": config.patch_shape,
         "with_segmentation_decoder": True,
@@ -197,35 +174,88 @@ def run_training(config: TrainingConfig, output_dir: Path) -> dict[str, Path]:
         "raw_transform": raw_transform,
     }
 
-    # TODO add raw_key and label_key to config if needed ("0" and "sam_labels" for OME-ZARR)
-    # Potentially
-    # raw_key = "0"
-    # label_key = "labels/mask/0"
-    # loader = default_sam_loader(
-    #     raw_paths=str(zarr_path),
-    #     raw_key=raw_key,
-    #     label_paths=str(zarr_path),
-    #     label_key=label_key,
-    #     is_train=True,
-    #     patch_shape=[2048, 2048],
-    #     with_segmentation_decoder=True,
-    #     batch_size=1,
-    # )
-    train_loader = default_sam_loader(
-        raw_paths=[str(p) for p in train_images],
-        label_paths=[str(p) for p in train_labels],
-        is_train=True,
-        sampler=train_sampler,
-        **loader_kwargs,
-    )
+    # Check mode and create appropriate loaders
+    if config.is_zarr_mode():
+        logger.info("Zarr container mode detected")
+        logger.info(f"Train zarr: {config.train_zarr_path}")
+        logger.info(f"Val zarr: {config.val_zarr_path}")
+        logger.info(f"Raw key: {config.raw_key}")
+        logger.info(f"Label key: {config.label_key}")
 
-    val_loader = default_sam_loader(
-        raw_paths=[str(p) for p in val_images],
-        label_paths=[str(p) for p in val_labels],
-        is_train=False,
-        sampler=val_sampler,
-        **loader_kwargs,
-    )
+        # Validate zarr paths exist
+        if not config.train_zarr_path.exists():
+            raise FileNotFoundError(
+                f"Training zarr not found: {config.train_zarr_path}"
+            )
+        if not config.val_zarr_path.exists():
+            raise FileNotFoundError(
+                f"Validation zarr not found: {config.val_zarr_path}"
+            )
+
+        # Simple zarr mode - just pass paths and keys to loader
+        train_loader = default_sam_loader(
+            raw_paths=str(config.train_zarr_path),
+            raw_key=config.raw_key,
+            label_paths=str(config.train_zarr_path),
+            label_key=config.label_key,
+            is_train=True,
+            sampler=train_sampler,
+            **loader_kwargs,
+        )
+
+        val_loader = default_sam_loader(
+            raw_paths=str(config.val_zarr_path),
+            raw_key=config.raw_key,
+            label_paths=str(config.val_zarr_path),
+            label_key=config.label_key,
+            is_train=False,
+            sampler=val_sampler,
+            **loader_kwargs,
+        )
+
+    else:
+        logger.info("Traditional directory mode detected")
+
+        # Validate directories exist
+        if not config.images_dir.exists():
+            raise FileNotFoundError(
+                f"Images directory does not exist: {config.images_dir}\n"
+                "If using augmentation, make sure the augmentation step completed successfully."
+            )
+        if not config.labels_dir.exists():
+            raise FileNotFoundError(
+                f"Labels directory does not exist: {config.labels_dir}\n"
+                "If using augmentation, make sure the augmentation step completed successfully."
+            )
+
+        # Prepare data splits
+        train_images, train_labels, val_images, val_labels = prepare_data_splits(
+            config.images_dir,
+            config.labels_dir,
+            config.val_split,
+            shuffle=config.shuffle_data,
+            seed=config.shuffle_seed,
+        )
+
+        train_loader = default_sam_loader(
+            raw_paths=[str(p) for p in train_images],
+            raw_key=None,
+            label_paths=[str(p) for p in train_labels],
+            label_key=None,
+            is_train=True,
+            sampler=train_sampler,
+            **loader_kwargs,
+        )
+
+        val_loader = default_sam_loader(
+            raw_paths=[str(p) for p in val_images],
+            raw_key=None,
+            label_paths=[str(p) for p in val_labels],
+            label_key=None,
+            is_train=False,
+            sampler=val_sampler,
+            **loader_kwargs,
+        )
 
     logger.info(f"Train batches: {len(train_loader)}, Val batches: {len(val_loader)}")
 

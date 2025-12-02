@@ -84,12 +84,29 @@ def config(
     # Training
     console.print("\n[bold]Training Configuration[/bold]")
 
-    if do_augmentation and aug_config is not None:
-        train_images = aug_config.output_dir / "images"
-        train_labels = aug_config.output_dir / "labels"
+    # Check data input mode
+    use_zarr = typer.confirm("Use zarr containers for training data?", default=False)
+    
+    train_images = None
+    train_labels = None
+    train_zarr_path = None
+    val_zarr_path = None
+    raw_key = None
+    label_key = None
+    
+    if use_zarr:
+        console.print("\n[dim]Zarr mode: Provide separate train and validation zarr containers[/dim]")
+        train_zarr_path = Path(typer.prompt("Training zarr container path"))
+        val_zarr_path = Path(typer.prompt("Validation zarr container path"))
+        raw_key = typer.prompt("Raw image key in zarr", default="0")
+        label_key = typer.prompt("Label key in zarr", default="labels/mask/0")
     else:
-        train_images = Path(typer.prompt("Training images directory"))
-        train_labels = Path(typer.prompt("Training labels directory"))
+        if do_augmentation and aug_config is not None:
+            train_images = aug_config.output_dir / "images"
+            train_labels = aug_config.output_dir / "labels"
+        else:
+            train_images = Path(typer.prompt("Training images directory"))
+            train_labels = Path(typer.prompt("Training labels directory"))
 
     model_type = typer.prompt(
         "Model type",
@@ -152,6 +169,10 @@ def config(
     train_config = TrainingConfig(
         images_dir=train_images,
         labels_dir=train_labels,
+        train_zarr_path=train_zarr_path,
+        val_zarr_path=val_zarr_path,
+        raw_key=raw_key,
+        label_key=label_key,
         model_type=model_type,
         patch_shape=(patch_h, patch_w),
         batch_size=batch_size,

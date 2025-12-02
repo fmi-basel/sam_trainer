@@ -112,12 +112,12 @@ def write_image(
     """
     path.parent.mkdir(parents=True, exist_ok=True)
 
-    if format == "ome-zarr":
-        _write_ome_zarr(data, path, label=label, label_name=key)
-    elif format == "tif":
+    # if format == "ome-zarr":
+    #     _write_ome_zarr(data, path, label=label, label_name=key)
+    if format == "tif":
         tif_imwrite(path.with_suffix(".tif"), data, compression="zlib")
-    elif format == "hdf5":
-        _write_hdf5(data, path.with_suffix(".h5"), key)
+    # elif format == "hdf5":
+    #     _write_hdf5(data, path.with_suffix(".h5"), key)
     else:
         raise ValueError(f"Unsupported format: {format}")
 

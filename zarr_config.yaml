@@ -1,0 +1,29 @@
+experiment_name: "zarr_training_example"
+output_base_dir: "runs"
+augmentation: null
+training:
+  # Zarr mode - provide separate train/val containers
+  images_dir: null
+  labels_dir: null
+  train_zarr_path: /path/to/train.zarr
+  val_zarr_path: /path/to/val.zarr
+  raw_key: "0"  # Key for raw images in zarr
+  label_key: "labels/mask/0"  # Key for labels in zarr
+  model_type: "vit_b_lm"
+  patch_shape: [2048, 2048]  # Full image size - no cropping/patching
+  batch_size: 6  # Increased from 1 - plenty of GPU memory available
+  n_epochs: 200  # Longer training since we see each image once per epoch
+  n_samples: null  # null = use actual dataset size (all images, no random sampling)
+  num_workers: 12  # Increased from 4 to utilize available CPUs
+  learning_rate: 5.0e-5
+  early_stopping: 50  # Allow 50 epochs without improvement before stopping
+  val_split: 0.0  # Zarr mode doesn't use val_split (data is pre-split)
+  shuffle_data: false
+  shuffle_seed: null
+  train_instance_segmentation_only: false  # Train full SAM model
+  use_min_instance_sampler: false  # Disabled - full images always have instances
+  min_instances_per_patch: 1  # Not used when sampler disabled
+  min_instance_size: 1  # Keep all objects ≥1 pixel (effectively no filtering)
+  save_validation_predictions_frequency: 1
+  checkpoint_name: "zarr_training_example"
+  resume_from_checkpoint: null
