@@ -27,13 +27,6 @@ logger = logging.getLogger(__name__)
 # TODO Add a global var for where to save new models downloaded during the run. Potentially outside of the script here
 
 
-# NOTE: The "No foreground objects" error is caused by micro_sam's internal target
-# preparation being stricter than MinInstanceSampler. The solution is to:
-# 1. Use very permissive sampler settings (min_instances=1, min_size=15)
-# 2. Increase n_samples significantly to provide many retry attempts
-# 3. Disable validation sampler entirely for full SAM training
-
-
 class PercentileNormalizer:
     def __init__(self, lower: float, upper: float):
         self.lower = lower
@@ -68,6 +61,7 @@ def _build_raw_transform(config: TrainingConfig):
     return PercentileNormalizer(lower, upper)
 
 
+# TODO adapt data split for OME-ZARR containers, which have labels inside the container (-> only 1 shuffling needed)
 def prepare_data_splits(
     images_dir: Path,
     labels_dir: Path,
@@ -203,6 +197,20 @@ def run_training(config: TrainingConfig, output_dir: Path) -> dict[str, Path]:
         "raw_transform": raw_transform,
     }
 
+    # TODO add raw_key and label_key to config if needed ("0" and "sam_labels" for OME-ZARR)
+    # Potentially
+    # raw_key = "0"
+    # label_key = "labels/mask/0"
+    # loader = default_sam_loader(
+    #     raw_paths=str(zarr_path),
+    #     raw_key=raw_key,
+    #     label_paths=str(zarr_path),
+    #     label_key=label_key,
+    #     is_train=True,
+    #     patch_shape=[2048, 2048],
+    #     with_segmentation_decoder=True,
+    #     batch_size=1,
+    # )
     train_loader = default_sam_loader(
         raw_paths=[str(p) for p in train_images],
         label_paths=[str(p) for p in train_labels],

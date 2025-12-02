@@ -3,37 +3,48 @@
 Run SAM inference (AMG mode) on HCS OME-Zarr plates.
 """
 
-import argparse
 import logging
-import os
 import sys
 from pathlib import Path
+from typing import Optional
 
 import numpy as np
 import torch
-from micro_sam.automatic_segmentation import (
-    automatic_instance_segmentation,
-)
+import typer
+from micro_sam.automatic_segmentation import automatic_instance_segmentation
 from micro_sam.instance_segmentation import InstanceSegmentationWithDecoder, get_decoder
 from micro_sam.util import get_sam_model
 from ome_zarr.io import parse_url
 from ome_zarr.reader import Reader
 from ome_zarr.writer import write_labels
+from rich.console import Console
+from rich.logging import RichHandler
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format="[%(asctime)s] %(levelname)-8s %(message)s",
-    datefmt="%H:%M:%S",
+app = typer.Typer(
+    name="sam-inference-hcs",
+    help="Run SAM instance segmentation inference on HCS OME-Zarr plates",
+    add_completion=False,
 )
-logger = logging.getLogger(__name__)
+console = Console()
 
 # Default model path on the cluster
-# DEFAULT_MODEL_PATH = "/tachyon/groups/scratch/gmicro/khosnikl/projects/sam_trainer/sam_trainer/runs/full_img_vit_b_a100_lr-1e-5_full_run/checkpoints/full_image_vit_b_a100_lr-1e-5_full_run/best.pt"
-DEFAULT_MODEL_PATH = Path(
-    r"C:\Repos\model_zoo\full_image_vit_b_a100_lr-1e5_full_run\best.pt"
-)
-INPUT = Path(r"C:\Repos\sam_trainer\dat\test_zarr\exp164-diff0.zarr")
+DEFAULT_MODEL_PATH = "/tachyon/groups/scratch/gmicro/khosnikl/projects/sam_trainer/sam_trainer/runs/full_img_vit_b_a100_lr-1e-5_full_run/checkpoints/full_image_vit_b_a100_lr-1e-5_full_run/best.pt"
+
+
+def setup_logging(verbosity: int) -> None:
+    """Configure logging based on verbosity level."""
+    level_map = {0: logging.WARNING, 1: logging.INFO, 2: logging.DEBUG}
+    level = level_map.get(verbosity, logging.DEBUG)
+
+    logging.basicConfig(
+        level=level,
+        format="%(message)s",
+        datefmt="[%X]",
+        handlers=[RichHandler(console=console, rich_tracebacks=True)],
+    )
+
+
+logger = logging.getLogger(__name__)
 
 
 def load_model_with_decoder(model_path: str, model_type: str, device: str) -> tuple:
@@ -52,7 +63,9 @@ def load_model_with_decoder(model_path: str, model_type: str, device: str) -> tu
     try:
         checkpoint = torch.load(model_path, map_location=device, weights_only=True)
     except Exception as e:
-        logger.warning(f"Failed to load with weights_only=True, trying weights_only=False: {e}")
+        logger.warning(
+            f"Failed to load with weights_only=True, trying weights_only=False: {e}"
+        )
         # If that fails, we need to add the parent directory to sys.path temporarily
         # so that sam_trainer module can be found during unpickling
         script_dir = Path(__file__).parent.parent
@@ -147,13 +160,12 @@ def process_image_node(node, predictor, segmenter, device):
     logger.info(f"  Saved labels to group: 'labels/{label_name}'")
 
 
-def process_plate(plate_path: Path, model_path: Path, device):
+def process_plate(plate_path: Path, model_path: Path, model_type: str, device: str):
     """Traverse the HCS plate and process all images."""
-    logger.info(f"Opening plate: {plate_path}")
+    console.print(f"[cyan]Opening plate:[/cyan] {plate_path}")
 
     # Open OME-Zarr
     # mode='r+' is needed to write labels back
-    # Note: Using standard ome_zarr. If NGIO is required, replace this section.
     try:
         loc = parse_url(plate_path, mode="r+")
         if loc is None:
@@ -162,36 +174,28 @@ def process_plate(plate_path: Path, model_path: Path, device):
         reader = Reader(loc)
         nodes = list(reader())
     except Exception as e:
-        logger.error(f"Failed to open plate {plate_path}: {e}")
-        return
+        console.print(f"[bold red]Error opening plate:[/bold red] {e}")
+        logger.exception(f"Failed to open plate {plate_path}")
+        raise typer.Exit(1)
 
-    # Load Model (AMG Mode)
-    logger.info(f"Loading model from: {model_path}")
+    # Load Model
+    console.print(f"[cyan]Loading model:[/cyan] {model_path}")
     try:
-        # predictor, segmenter = get_predictor_and_segmenter(
-        #     model_type="vit_b_lm",  # Assuming model type based on path
-        #     checkpoint=model_path,
-        #     device=device,
-        #     amg=True,  # Use AMG mode
-        #     is_custom_model=True,  # It's a finetuned model
-        # )
         predictor, segmenter = load_model_with_decoder(
             model_path=str(model_path),
-            model_type="vit_b_lm",
+            model_type=model_type,
             device=device,
         )
-
+        console.print("[green]✓[/green] Model loaded successfully")
     except Exception as e:
-        logger.error(f"Failed to load model: {e}")
-        return
+        console.print(f"[bold red]Error loading model:[/bold red] {e}")
+        logger.exception("Model loading failed")
+        raise typer.Exit(1)
 
     # Traverse nodes
-    # In HCS OME-Zarr, nodes are typically the images (Fields)
     count = 0
     for node in nodes:
-        # Check if this node is an image (has data)
         if node.data:
-            # Construct a readable path/ID for logging
             node_path = node.zarr.path
             logger.info(f"Found image node: {node_path}")
 
@@ -199,43 +203,64 @@ def process_plate(plate_path: Path, model_path: Path, device):
                 process_image_node(node, predictor, segmenter, device)
                 count += 1
             except Exception as e:
-                logger.error(f"Failed to process {node_path}: {e}")
+                console.print(f"[yellow]⚠[/yellow] Failed to process {node_path}: {e}")
+                logger.exception(f"Failed to process {node_path}")
 
-    logger.info(f"Finished processing plate. Total images: {count}")
+    console.print(f"[green]✓[/green] Finished processing plate. Total images: {count}")
 
 
-def main():
-    parser = argparse.ArgumentParser(
-        description="Run SAM inference on HCS OME-Zarr plate"
-    )
-    parser.add_argument(
-        "-i",
+@app.command()
+def main(
+    input_plate: Path = typer.Option(
+        ...,
         "--input",
-        type=Path,
-        default=INPUT,
-        # required=True,
-        help="Path to the OME-Zarr plate (e.g., path/to/plate.zarr)",
-    )
-    parser.add_argument(
-        "-m",
+        "-i",
+        help="Path to HCS OME-Zarr plate (.zarr file)",
+        exists=True,
+        file_okay=False,
+        dir_okay=True,
+        resolve_path=True,
+    ),
+    model_path: Path = typer.Option(
+        DEFAULT_MODEL_PATH,
         "--model",
-        type=Path,
-        default=DEFAULT_MODEL_PATH,
-        help="Path to the model checkpoint",
-    )
+        "-m",
+        help="Path to trained SAM model (.pt file)",
+    ),
+    model_type: str = typer.Option(
+        "vit_b_lm",
+        "--model-type",
+        "-t",
+        help="SAM model type (vit_b_lm, etc.)",
+    ),
+    device: Optional[str] = typer.Option(
+        None,
+        "--device",
+        "-d",
+        help="Device to use (cuda/cpu). Auto-detect if not specified",
+    ),
+    verbose: int = typer.Option(
+        0, "--verbose", "-v", count=True, help="Increase logging verbosity"
+    ),
+) -> None:
+    """Run SAM instance segmentation inference on HCS OME-Zarr plate."""
+    setup_logging(verbose)
 
-    args = parser.parse_args()
+    # Validate model path
+    if not model_path.exists():
+        console.print(f"[bold red]Error:[/bold red] Model file not found: {model_path}")
+        raise typer.Exit(1)
 
-    # Check device
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    logger.info(f"Using device: {device}")
+    # Set device
+    if device is None:
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+    console.print(f"[cyan]Device:[/cyan] {device}")
 
-    if not os.path.exists(args.input):
-        logger.error(f"Input path does not exist: {args.input}")
-        sys.exit(1)
+    process_plate(input_plate, model_path, model_type, device)
 
-    process_plate(args.input, args.model, device)
+    console.print("\n[bold green]✓ Inference complete![/bold green]")
+    console.print(f"Labels saved in: {input_plate}")
 
 
 if __name__ == "__main__":
-    main()
+    app()

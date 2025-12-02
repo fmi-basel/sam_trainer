@@ -6,9 +6,7 @@ from typing import Literal, Optional
 
 import h5py
 import numpy as np
-import zarr
-from ome_zarr.io import parse_url
-from ome_zarr.reader import Reader
+from ngio import open_ome_zarr_container
 from skimage import io as skio
 from tifffile import imread as tif_imread
 from tifffile import imwrite as tif_imwrite
@@ -16,12 +14,13 @@ from tifffile import imwrite as tif_imwrite
 logger = logging.getLogger(__name__)
 
 
-def read_image(path: Path, key: Optional[str] = None) -> np.ndarray:
+def read_image(path: Path, key: Optional[str] = None, level: int = 0) -> np.ndarray:
     """Read an image from various formats.
 
     Args:
         path: Path to the image file or directory (for OME-Zarr)
         key: Dataset key for HDF5 files (ignored for other formats)
+        level: Resolution level for OME-Zarr (0 = highest resolution)
 
     Returns:
         Image array with shape (Z, Y, X) for 3D or (Y, X) for 2D
@@ -34,9 +33,9 @@ def read_image(path: Path, key: Optional[str] = None) -> np.ndarray:
         raise FileNotFoundError(f"Image path does not exist: {path}")
 
     # OME-Zarr (directory-based format)
-    if path.is_dir():
+    if path.is_dir() or (path.suffix.lower() == ".zarr"):
         logger.debug(f"Reading OME-Zarr from {path}")
-        return _read_ome_zarr(path)
+        return _read_ome_zarr(path, level=level)
 
     # File-based formats
     suffix = path.suffix.lower()
@@ -49,39 +48,19 @@ def read_image(path: Path, key: Optional[str] = None) -> np.ndarray:
         logger.debug(f"Reading HDF5 from {path}")
         return _read_hdf5(path, key)
 
-    elif suffix == ".zarr":
-        logger.debug(f"Reading Zarr from {path}")
-        return _read_zarr_file(path)
-
     else:
         # Try generic imread as fallback
         logger.debug(f"Attempting generic read for {path}")
         return skio.imread(path)
 
 
-def _read_ome_zarr(path: Path) -> np.ndarray:
-    """Read OME-Zarr format (directory-based)."""
-    zarr_location = parse_url(str(path))
-    if zarr_location is None:
-        raise ValueError(f"Failed to parse OME-Zarr location: {path}")
-    reader = Reader(zarr_location)
-
-    # Get the first (highest resolution) image
-    nodes = list(reader())
-    if not nodes:
-        raise ValueError(f"No image data found in OME-Zarr: {path}")
-
-    image_node = nodes[0]
-    data = image_node.data[0]  # Get highest resolution level
-
-    # Load into memory (consider lazy loading for very large images)
-    return np.asarray(data)
-
-
-def _read_zarr_file(path: Path) -> np.ndarray:
-    """Read a single Zarr file."""
-    z = zarr.open(str(path), mode="r")
-    return np.asarray(z)
+def _read_ome_zarr(path: Path, level: int = 0) -> np.ndarray:
+    """Read OME-Zarr format using NGIO."""
+    try:
+        return open_ome_zarr_container(str(path)).get_image().get_as_numpy()
+    except Exception as e:
+        logger.error(f"Failed to read OME-Zarr: {e}")
+        raise
 
 
 def _read_hdf5(path: Path, key: Optional[str] = None) -> np.ndarray:
@@ -120,6 +99,7 @@ def write_image(
     path: Path,
     format: Literal["ome-zarr", "tif", "hdf5"],
     key: str = "data",
+    label: bool = False,
 ) -> None:
     """Write image data to various formats.
 
@@ -127,12 +107,13 @@ def write_image(
         data: Image array with shape (Z, Y, X) or (Y, X)
         path: Output path
         format: Output format
-        key: Dataset name for HDF5 (ignored for other formats)
+        key: Dataset name for HDF5 or label name for OME-Zarr
+        label: If True, write as label data in OME-Zarr (ignored for other formats)
     """
     path.parent.mkdir(parents=True, exist_ok=True)
 
     if format == "ome-zarr":
-        _write_ome_zarr(data, path)
+        _write_ome_zarr(data, path, label=label, label_name=key)
     elif format == "tif":
         tif_imwrite(path.with_suffix(".tif"), data, compression="zlib")
     elif format == "hdf5":
@@ -143,31 +124,36 @@ def write_image(
     logger.debug(f"Wrote {format} to {path}")
 
 
-def _write_ome_zarr(data: np.ndarray, path: Path) -> None:
-    """Write OME-Zarr format."""
-    from ome_zarr.writer import write_image as ome_write
-
-    path.mkdir(parents=True, exist_ok=True)
-    zarr_location = parse_url(str(path), mode="w")
-    if zarr_location is None or not hasattr(zarr_location, "store"):
-        raise ValueError(f"Failed to parse OME-Zarr location for writing: {path}")
-    store = zarr_location.store
-
-    # Write with default chunks and no pyramid for simplicity
-    ome_write(
-        image=data,
-        group=zarr.group(store=store),
-        axes="zyx" if data.ndim == 3 else "yx",
-        storage_options=dict(
-            chunks=(1, min(512, data.shape[-2]), min(512, data.shape[-1]))
-        ),
-    )
-
-
 def _write_hdf5(data: np.ndarray, path: Path, key: str) -> None:
-    """Write HDF5 format."""
+    """Write HDF5 file."""
     with h5py.File(path, "w") as f:
-        f.create_dataset(key, data=data, compression="gzip", chunks=True)
+        f.create_dataset(key, data=data, compression="gzip")
+
+
+def _write_ome_zarr(
+    data: np.ndarray, path: Path, label: bool = False, label_name: str = "labels"
+) -> None:
+    """Write OME-Zarr format using NGIO.
+
+    Args:
+        data: Image or label array
+        path: Output path
+        label: If True, write as label; if False, write as image
+        label_name: Name for label dataset (only used if label=True)
+    """
+    try:
+        # Create or open NGFF image
+        ngff_image = NgffImage(str(path), mode="r+" if path.exists() else "w")
+
+        # Write as image
+        ngff_image.add_image(
+            data=data,
+            name="0",  # Default image name
+            overwrite=True,
+        )
+    except Exception as e:
+        logger.error(f"Failed to write OME-Zarr: {e}")
+        raise
 
 
 def get_image_paths(directory: Path, pattern: str = "*") -> list[Path]:
@@ -178,23 +164,26 @@ def get_image_paths(directory: Path, pattern: str = "*") -> list[Path]:
         pattern: Glob pattern to match files
 
     Returns:
-        Sorted list of paths (includes both files and directories for OME-Zarr)
+        Sorted list of paths (includes .zarr directories and regular files)
     """
     if not directory.exists():
         raise FileNotFoundError(f"Directory does not exist: {directory}")
 
-    # For OME-Zarr, look for directories containing .zattrs or .zgroup
+    # Find OME-Zarr directories (contain .zattrs and .zgroup)
     zarr_dirs = [
         p.parent for p in directory.rglob(".zattrs") if (p.parent / ".zgroup").exists()
     ]
 
-    # Regular files
-    file_patterns = ["*.tif", "*.tiff", "*.h5", "*.hdf5", "*.zarr"]
+    # Find regular files
+    file_patterns = ["*.tif", "*.tiff", "*.h5", "*.hdf5"]
     files = []
     for pat in file_patterns:
         files.extend(directory.glob(pat))
 
-    all_paths = sorted(set(zarr_dirs + files))
+    # Also include .zarr files/directories directly
+    zarr_paths = list(directory.glob("*.zarr"))
+
+    all_paths = sorted(set(zarr_dirs + zarr_paths + files))
     logger.debug(f"Found {len(all_paths)} images in {directory}")
 
     return all_paths
