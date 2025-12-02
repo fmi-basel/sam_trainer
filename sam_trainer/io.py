@@ -124,38 +124,6 @@ def write_image(
     logger.debug(f"Wrote {format} to {path}")
 
 
-def _write_hdf5(data: np.ndarray, path: Path, key: str) -> None:
-    """Write HDF5 file."""
-    with h5py.File(path, "w") as f:
-        f.create_dataset(key, data=data, compression="gzip")
-
-
-def _write_ome_zarr(
-    data: np.ndarray, path: Path, label: bool = False, label_name: str = "labels"
-) -> None:
-    """Write OME-Zarr format using NGIO.
-
-    Args:
-        data: Image or label array
-        path: Output path
-        label: If True, write as label; if False, write as image
-        label_name: Name for label dataset (only used if label=True)
-    """
-    try:
-        # Create or open NGFF image
-        ngff_image = NgffImage(str(path), mode="r+" if path.exists() else "w")
-
-        # Write as image
-        ngff_image.add_image(
-            data=data,
-            name="0",  # Default image name
-            overwrite=True,
-        )
-    except Exception as e:
-        logger.error(f"Failed to write OME-Zarr: {e}")
-        raise
-
-
 def get_image_paths(directory: Path, pattern: str = "*") -> list[Path]:
     """Get sorted list of image paths from directory.
 
