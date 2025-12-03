@@ -1,24 +1,34 @@
 #!/usr/bin/env python
-"""
-Run SAM inference (AMG mode) on HCS OME-Zarr plates.
+"""SAM inference script for HCS OME-Zarr plates using NGIO.
+
+This script is specialized for High-Content Screening (HCS) plate structures
+with wells and fields. For single OME-Zarr images or TIFFs, use run_inference.py instead.
+
+Usage:
+    # Single HCS plate
+    python run_inference_hcs.py --input plate.zarr --model model.pt
+
+    # Batch process all plates in a directory
+    python run_inference_hcs.py --input /path/to/plates/ --model model.pt
 """
 
-import logging
-import sys
 from pathlib import Path
 from typing import Optional
 
 import numpy as np
 import torch
 import typer
-from micro_sam.automatic_segmentation import automatic_instance_segmentation
-from micro_sam.instance_segmentation import InstanceSegmentationWithDecoder, get_decoder
-from micro_sam.util import get_sam_model
-from ome_zarr.io import parse_url
-from ome_zarr.reader import Reader
-from ome_zarr.writer import write_labels
+from ngio import open_ome_zarr_plate
+from ngio.experimental.iterators import SegmentationIterator
 from rich.console import Console
-from rich.logging import RichHandler
+
+from sam_trainer.utils.inference_utils import (
+    load_model_with_decoder,
+    segment_image,
+)
+from sam_trainer.utils.logging import setup_logging, get_logger
+
+# TODO test all inference versions
 
 app = typer.Typer(
     name="sam-inference-hcs",
@@ -26,159 +36,142 @@ app = typer.Typer(
     add_completion=False,
 )
 console = Console()
+logger = get_logger(__name__)
 
-# Default model path on the cluster
-DEFAULT_MODEL_PATH = "/tachyon/groups/scratch/gmicro/khosnikl/projects/sam_trainer/sam_trainer/runs/full_img_vit_b_a100_lr-1e-5_full_run/checkpoints/full_image_vit_b_a100_lr-1e-5_full_run/best.pt"
-
-
-def setup_logging(verbosity: int) -> None:
-    """Configure logging based on verbosity level."""
-    level_map = {0: logging.WARNING, 1: logging.INFO, 2: logging.DEBUG}
-    level = level_map.get(verbosity, logging.DEBUG)
-
-    logging.basicConfig(
-        level=level,
-        format="%(message)s",
-        datefmt="[%X]",
-        handlers=[RichHandler(console=console, rich_tracebacks=True)],
-    )
+# Default model path on cluster
+DEFAULT_MODEL_PATH = (
+    "/tachyon/groups/scratch/gmicro/khosnikl/projects/sam_trainer/sam_trainer/"
+    "runs/full_img_vit_b_a100_lr-1e-5_full_run/checkpoints/"
+    "full_image_vit_b_a100_lr-1e-5_full_run/best.pt"
+)
 
 
-logger = logging.getLogger(__name__)
-
-
-def load_model_with_decoder(model_path: str, model_type: str, device: str) -> tuple:
-    """Load an exported model that includes decoder state.
+def process_well(
+    well_image_container,
+    predictor,
+    segmenter,
+    label_name: str,
+) -> None:
+    """Process a single well in an HCS plate.
 
     Args:
-        model_path: Path to exported model checkpoint
-        model_type: SAM model type
-        device: Device to load on
-
-    Returns:
-        Tuple of (predictor, segmenter)
+        well_image_container: NGIO image container for the well
+        predictor: SAM predictor
+        segmenter: SAM segmenter
+        label_name: Name for the label layer
     """
-    # Load the checkpoint with weights_only=True to avoid unpickling issues
-    # This loads only tensors, avoiding module references
+    # Get image data
+    image_data = well_image_container.get_image()
+    logger.info(f"  Image shape: {image_data.shape}")
+
+    # Create label container
+    label = well_image_container.derive_label(label_name, overwrite=True)
+
+    # Use SegmentationIterator for efficient processing
+    seg = SegmentationIterator(input_image=image_data, output_label=label)
+
+    total_instances = 0
+    for img, lbl_writer in seg.iter_as_numpy():
+        masks = segment_image(img, predictor, segmenter)
+
+        lbl_writer(patch=masks.astype(np.uint8))
+
+        n_instances = len(np.unique(masks)) - 1
+        total_instances += n_instances
+        logger.debug(f"    Image: {n_instances} instances")
+
+    logger.info(f"  Total instances: {total_instances}")
+
+
+def process_wells(
+    plate,
+    predictor,
+    segmenter,
+    label_name: str,
+) -> None:
+    """Process all wells in an HCS plate.
+
+    Args:
+        plate: NGIO plate object
+        predictor: SAM predictor
+        segmenter: SAM segmenter
+        label_name: Name for the label layer
+    """
+    wells = list(plate.get_wells().keys())
+    console.print(f"[cyan]Found {len(wells)} wells to process[/cyan]")
+
+    for well_id in wells:
+        try:
+            # Get the image for this well (assuming one image per well)
+            well_image_container = plate.get_image(
+                row=well_id[0],
+                column=int(well_id[2:]),
+                image_path="0",
+            )
+            logger.info(f"Processing well {well_id}")
+
+            process_well(
+                well_image_container=well_image_container,
+                predictor=predictor,
+                segmenter=segmenter,
+                label_name=label_name,
+            )
+
+        except Exception as e:
+            console.print(f"[yellow]⚠[/yellow] Error processing well {well_id}: {e}")
+            logger.exception(f"Failed to process well {well_id}")
+            continue
+
+
+def process_single_plate(
+    plate_path: Path,
+    predictor,
+    segmenter,
+    label_name: str,
+) -> None:
+    """Process a single HCS plate.
+
+    Args:
+        plate_path: Path to HCS plate zarr
+        predictor: SAM predictor
+        segmenter: SAM segmenter
+        label_name: Name for the label layer
+    """
+    console.print(f"\n[cyan]Opening plate:[/cyan] {plate_path}")
+
     try:
-        checkpoint = torch.load(model_path, map_location=device, weights_only=True)
-    except Exception as e:
-        logger.warning(
-            f"Failed to load with weights_only=True, trying weights_only=False: {e}"
-        )
-        # If that fails, we need to add the parent directory to sys.path temporarily
-        # so that sam_trainer module can be found during unpickling
-        script_dir = Path(__file__).parent.parent
-        if str(script_dir) not in sys.path:
-            sys.path.insert(0, str(script_dir))
-        checkpoint = torch.load(model_path, map_location=device, weights_only=False)
-
-    # Extract SAM model state (remove decoder_state)
-    model_state = {k: v for k, v in checkpoint.items() if k != "decoder_state"}
-
-    # Load SAM model
-    predictor = get_sam_model(
-        model_type=model_type,
-        checkpoint_path=None,  # We'll load state manually
-        device=device,
-        return_sam=False,
-    )
-    sam = predictor.model
-    sam.load_state_dict(model_state, strict=False)
-
-    # Load decoder with the image encoder
-    decoder = get_decoder(
-        image_encoder=sam.image_encoder,
-        decoder_state=checkpoint["decoder_state"],
-        device=device,
-    )
-
-    # Create segmenter
-    segmenter = InstanceSegmentationWithDecoder(predictor, decoder)
-
-    return predictor, segmenter
-
-
-def process_image_node(node, predictor, segmenter, device):
-    """Process a single image node (Field) within the HCS plate."""
-
-    # 1. Load Image Data (Level 0 - highest resolution)
-    # node.data is a list of dask arrays (multiscales)
-    dask_data = node.data[0]
-
-    # Convert to numpy
-    image_data = np.array(dask_data)
-    original_shape = image_data.shape
-
-    # Handle dimensions: squeeze singleton dimensions for inference
-    # Expected input for SAM is (C, Y, X) or (Y, X)
-    # HCS data is often (T, C, Z, Y, X) e.g. (1, 1, 1, 2048, 2048)
-    inference_image = image_data.squeeze()
-
-    logger.info(
-        f"  Processing image shape: {inference_image.shape} (Original: {original_shape})"
-    )
-
-    # 2. Run Inference (AMG)
-    # automatic_instance_segmentation handles the prediction loop
-    prediction = automatic_instance_segmentation(
-        predictor=predictor,
-        segmenter=segmenter,
-        input_path=inference_image,  # We pass data directly
-        ndim=2,  # Force 2D segmentation
-        # image=inference_image,
-        device=device,
-        verbose=False,
-    )
-
-    # 3. Prepare Labels for Writing
-    # We need to reshape the 2D prediction back to the original 5D shape (or whatever it was)
-    # to satisfy OME-Zarr expectations if we want to match the image structure.
-    # If original was (1, 1, 1, Y, X), we make labels (1, 1, 1, Y, X)
-
-    # Create a view with the original shape
-    try:
-        labels_data = prediction.reshape(original_shape)
-    except ValueError:
-        logger.warning(
-            f"  Could not reshape prediction {prediction.shape} to {original_shape}. Saving as 2D."
-        )
-        labels_data = prediction
-
-    # 4. Save as Labels
-    # node.zarr is the zarr group for this image.
-    image_group = node.zarr
-
-    # Define label name
-    label_name = "labels"
-
-    # write_labels helper from ome_zarr handles creating the 'labels' group and metadata
-    # It will write the data to the group.
-    write_labels(
-        labels=labels_data, group=image_group, name=label_name, storage_options=None
-    )
-    logger.info(f"  Saved labels to group: 'labels/{label_name}'")
-
-
-def process_plate(plate_path: Path, model_path: Path, model_type: str, device: str):
-    """Traverse the HCS plate and process all images."""
-    console.print(f"[cyan]Opening plate:[/cyan] {plate_path}")
-
-    # Open OME-Zarr
-    # mode='r+' is needed to write labels back
-    try:
-        loc = parse_url(plate_path, mode="r+")
-        if loc is None:
-            raise ValueError(f"Could not parse URL: {plate_path}")
-
-        reader = Reader(loc)
-        nodes = list(reader())
+        plate = open_ome_zarr_plate(plate_path)
+        console.print(f"[green]✓[/green] Plate opened: {plate}")
     except Exception as e:
         console.print(f"[bold red]Error opening plate:[/bold red] {e}")
         logger.exception(f"Failed to open plate {plate_path}")
-        raise typer.Exit(1)
+        return
 
-    # Load Model
+    try:
+        process_wells(plate, predictor, segmenter, label_name)
+        console.print(f"[green]✓[/green] Plate complete: {plate_path}")
+    except Exception as e:
+        console.print(f"[bold red]Error processing plate:[/bold red] {e}")
+        logger.exception(f"Failed to process plate {plate_path}")
+
+
+def process_hcs_plates(
+    input_path: Path,
+    model_path: Path,
+    model_type: str,
+    device: str,
+    label_name: str,
+) -> None:
+    """Process either a single plate or all plates in a directory.
+
+    Args:
+        input_path: Path to a single .zarr plate or parent directory containing plates
+        model_path: Path to model checkpoint
+        model_type: SAM model type
+        device: Device to use
+        label_name: Name for the label layer
+    """
+    # Load model once
     console.print(f"[cyan]Loading model:[/cyan] {model_path}")
     try:
         predictor, segmenter = load_model_with_decoder(
@@ -192,21 +185,27 @@ def process_plate(plate_path: Path, model_path: Path, model_type: str, device: s
         logger.exception("Model loading failed")
         raise typer.Exit(1)
 
-    # Traverse nodes
-    count = 0
-    for node in nodes:
-        if node.data:
-            node_path = node.zarr.path
-            logger.info(f"Found image node: {node_path}")
+    # Determine if input is a single plate or parent directory
+    if input_path.name.endswith(".zarr"):
+        # Single plate
+        console.print("[cyan]Mode:[/cyan] Single plate processing")
+        process_single_plate(input_path, predictor, segmenter, label_name)
+    else:
+        # Parent directory - find all .zarr plates
+        console.print("[cyan]Mode:[/cyan] Batch processing")
+        zarr_plates = sorted(input_path.glob("*.zarr"))
 
-            try:
-                process_image_node(node, predictor, segmenter, device)
-                count += 1
-            except Exception as e:
-                console.print(f"[yellow]⚠[/yellow] Failed to process {node_path}: {e}")
-                logger.exception(f"Failed to process {node_path}")
+        if not zarr_plates:
+            console.print(
+                f"[bold red]Error:[/bold red] No .zarr plates found in {input_path}"
+            )
+            raise typer.Exit(1)
 
-    console.print(f"[green]✓[/green] Finished processing plate. Total images: {count}")
+        console.print(f"[cyan]Found {len(zarr_plates)} plates to process[/cyan]")
+
+        for i, plate_path in enumerate(zarr_plates, 1):
+            console.print(f"\n[cyan]Processing plate {i}/{len(zarr_plates)}[/cyan]")
+            process_single_plate(plate_path, predictor, segmenter, label_name)
 
 
 @app.command()
@@ -215,11 +214,7 @@ def main(
         ...,
         "--input",
         "-i",
-        help="Path to HCS OME-Zarr plate (.zarr file)",
-        exists=True,
-        file_okay=False,
-        dir_okay=True,
-        resolve_path=True,
+        help="Path to HCS OME-Zarr plate (.zarr file) or parent directory containing plates",
     ),
     model_path: Path = typer.Option(
         DEFAULT_MODEL_PATH,
@@ -233,6 +228,11 @@ def main(
         "-t",
         help="SAM model type (vit_b_lm, etc.)",
     ),
+    label_name: str = typer.Option(
+        "sam_labels",
+        "--label-name",
+        help="Name for the label layer in OME-Zarr outputs",
+    ),
     device: Optional[str] = typer.Option(
         None,
         "--device",
@@ -243,11 +243,22 @@ def main(
         0, "--verbose", "-v", count=True, help="Increase logging verbosity"
     ),
 ) -> None:
-    """Run SAM instance segmentation inference on HCS OME-Zarr plate."""
-    setup_logging(verbose)
+    """Run SAM instance segmentation inference on HCS OME-Zarr plate.
 
-    # Validate model path
-    if not model_path.exists():
+    This script is specialized for HCS plate structures (wells/fields).
+    For single OME-Zarr images or TIFFs, use run_inference.py instead.
+
+    Labels are written back to the zarr structure under labels/<label_name>.
+    """
+    setup_logging(verbose, console)
+
+    # Validate inputs
+    if not input_plate.exists():
+        console.print(
+            f"[bold red]Error:[/bold red] Input plate not found: {input_plate}"
+        )
+        raise typer.Exit(1)
+    if model_path and not model_path.exists():
         console.print(f"[bold red]Error:[/bold red] Model file not found: {model_path}")
         raise typer.Exit(1)
 
@@ -256,10 +267,15 @@ def main(
         device = "cuda" if torch.cuda.is_available() else "cpu"
     console.print(f"[cyan]Device:[/cyan] {device}")
 
-    process_plate(input_plate, model_path, model_type, device)
+    process_hcs_plates(
+        input_path=input_plate,
+        model_path=model_path,
+        model_type=model_type,
+        device=device,
+        label_name=label_name,
+    )
 
-    console.print("\n[bold green]✓ Inference complete![/bold green]")
-    console.print(f"Labels saved in: {input_plate}")
+    console.print("\n[bold green]✓ All inference complete![/bold green]")
 
 
 if __name__ == "__main__":

@@ -9,7 +9,7 @@
 #SBATCH --mem=100G
 #SBATCH --gres=gpu:1
 #SBATCH --constraint="infiniband&gpuram48gb"
-#SBATCH --time=48:00:00
+#SBATCH --time=56:00:00
 #SBATCH --output=logs/%x-%j.out
 #SBATCH --error=logs/%x-%j.err
 

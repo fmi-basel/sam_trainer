@@ -52,7 +52,7 @@ fi
 
 # Run inference (Python script handles both single plate and batch mode)
 echo "[INFO] Running inference on: $INPUT_PATH"
-pixi run -e gpu python sam_trainer/run_inference_ngio.py \
+pixi run -e gpu python sam_trainer/run_inference_hcs.py \
     --input "$INPUT_PATH" \
     -v
 

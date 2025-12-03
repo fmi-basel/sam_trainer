@@ -12,12 +12,17 @@
 #SBATCH --error=logs/inference-%j.err
 
 # SAM Inference SLURM Batch Script
-# Usage: sbatch scripts/submit_inference.sh <model_path> <input_dir> <output_dir> [extra_args]
+# Supports TIFF and OME-Zarr inputs (auto-detected)
+# Usage:
+#   TIFF: sbatch scripts/submit_inference.sh <model_path> <input_dir> <output_dir> [extra_args]
+#   Zarr: sbatch scripts/submit_inference.sh <model_path> <input.zarr> "" [extra_args]
+#         (output_dir not used for zarr - labels written back to zarr)
 
 set -eu
 
 if [ $# -lt 3 ]; then
-    echo "Usage: sbatch scripts/submit_inference.sh <model_path> <input_dir> <output_dir> [extra_args]"
+    echo "Usage: sbatch scripts/submit_inference.sh <model_path> <input_path> <output_dir> [extra_args]"
+    echo "  For OME-Zarr: output_dir can be empty (\"\"), labels are written back to zarr"
     exit 1
 fi
 
@@ -37,7 +42,7 @@ echo "[INFO] Extra Args: $EXTRA_ARGS"
 mkdir -p "$OUTPUT_DIR"
 
 # Run inference
-pixi run -e gpu python scripts/run_inference.py \
+pixi run -e gpu python sam_trainer/run_inference.py \
     --model "$MODEL_PATH" \
     --input "$INPUT_DIR" \
     --output "$OUTPUT_DIR" \

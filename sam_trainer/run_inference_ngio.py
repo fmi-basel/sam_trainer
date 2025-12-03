@@ -21,7 +21,8 @@ from micro_sam.util import get_sam_model
 from ngio import open_ome_zarr_plate
 from ngio.experimental.iterators import SegmentationIterator
 from rich.console import Console
-from rich.logging import RichHandler
+
+from sam_trainer.utils.logging import setup_logging
 
 app = typer.Typer(
     name="sam-inference-ngio",
@@ -30,20 +31,7 @@ app = typer.Typer(
 )
 console = Console()
 
-
-def setup_logging(verbosity: int) -> None:
-    """Configure logging based on verbosity level."""
-    level_map = {0: logging.WARNING, 1: logging.INFO, 2: logging.DEBUG}
-    level = level_map.get(verbosity, logging.DEBUG)
-
-    logging.basicConfig(
-        level=level,
-        format="%(message)s",
-        datefmt="[%X]",
-        handlers=[RichHandler(console=console, rich_tracebacks=True)],
-    )
-
-
+# TODO make the reading of the input dirs automatic, so that you don't need to flag hcs/ome/tif etc
 logger = logging.getLogger(__name__)
 
 
