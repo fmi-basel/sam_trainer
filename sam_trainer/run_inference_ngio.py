@@ -249,7 +249,7 @@ def main(
     ),
 ) -> None:
     """Run SAM instance segmentation inference on HCS OME-Zarr plate."""
-    setup_logging(verbose)
+    setup_logging(verbose, console)
 
     # Validate inputs
     if not input_plate.exists():

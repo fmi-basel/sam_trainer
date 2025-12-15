@@ -26,7 +26,7 @@ from sam_trainer.utils.inference_utils import (
     load_model_with_decoder,
     segment_image,
 )
-from sam_trainer.utils.logging import setup_logging, get_logger
+from sam_trainer.utils.logging import get_logger, setup_logging
 
 # TODO test all inference versions
 
@@ -44,6 +44,11 @@ DEFAULT_MODEL_PATH = (
     "runs/full_img_vit_b_a100_lr-1e-5_full_run/checkpoints/"
     "full_image_vit_b_a100_lr-1e-5_full_run/best.pt"
 )
+# DEFAULT_MODEL_PATH = (
+#     "W:/groups/scratch/gmicro/khosnikl/projects/sam_trainer/sam_trainer/"
+#     "runs/full_img_vit_b_a100_lr-1e-5_full_run/checkpoints/"
+#     "full_image_vit_b_a100_lr-1e-5_full_run/best.pt"
+# )
 
 
 def process_well(
@@ -51,6 +56,8 @@ def process_well(
     predictor,
     segmenter,
     label_name: str,
+    use_amg: bool = False,
+    generate_kwargs: dict = None,
 ) -> None:
     """Process a single well in an HCS plate.
 
@@ -59,6 +66,8 @@ def process_well(
         predictor: SAM predictor
         segmenter: SAM segmenter
         label_name: Name for the label layer
+        use_amg: Whether using AMG mode
+        generate_kwargs: Optional decoder parameters
     """
     # Get image data
     image_data = well_image_container.get_image()
@@ -72,7 +81,9 @@ def process_well(
 
     total_instances = 0
     for img, lbl_writer in seg.iter_as_numpy():
-        masks = segment_image(img, predictor, segmenter)
+        masks = segment_image(
+            img, predictor, segmenter, use_amg=use_amg, generate_kwargs=generate_kwargs
+        )
 
         lbl_writer(patch=masks.astype(np.uint8))
 
@@ -88,6 +99,8 @@ def process_wells(
     predictor,
     segmenter,
     label_name: str,
+    use_amg: bool = False,
+    generate_kwargs: dict = None,
 ) -> None:
     """Process all wells in an HCS plate.
 
@@ -96,6 +109,8 @@ def process_wells(
         predictor: SAM predictor
         segmenter: SAM segmenter
         label_name: Name for the label layer
+        use_amg: Whether using AMG mode
+        generate_kwargs: Optional decoder parameters
     """
     wells = list(plate.get_wells().keys())
     console.print(f"[cyan]Found {len(wells)} wells to process[/cyan]")
@@ -115,6 +130,8 @@ def process_wells(
                 predictor=predictor,
                 segmenter=segmenter,
                 label_name=label_name,
+                use_amg=use_amg,
+                generate_kwargs=generate_kwargs,
             )
 
         except Exception as e:
@@ -128,6 +145,8 @@ def process_single_plate(
     predictor,
     segmenter,
     label_name: str,
+    use_amg: bool = False,
+    generate_kwargs: dict = None,
 ) -> None:
     """Process a single HCS plate.
 
@@ -136,6 +155,8 @@ def process_single_plate(
         predictor: SAM predictor
         segmenter: SAM segmenter
         label_name: Name for the label layer
+        use_amg: Whether using AMG mode
+        generate_kwargs: Optional decoder parameters
     """
     console.print(f"\n[cyan]Opening plate:[/cyan] {plate_path}")
 
@@ -148,7 +169,7 @@ def process_single_plate(
         return
 
     try:
-        process_wells(plate, predictor, segmenter, label_name)
+        process_wells(plate, predictor, segmenter, label_name, use_amg, generate_kwargs)
         console.print(f"[green]✓[/green] Plate complete: {plate_path}")
     except Exception as e:
         console.print(f"[bold red]Error processing plate:[/bold red] {e}")
@@ -161,6 +182,8 @@ def process_hcs_plates(
     model_type: str,
     device: str,
     label_name: str,
+    use_amg: bool = False,
+    generate_kwargs: dict = None,
 ) -> None:
     """Process either a single plate or all plates in a directory.
 
@@ -170,14 +193,19 @@ def process_hcs_plates(
         model_type: SAM model type
         device: Device to use
         label_name: Name for the label layer
+        use_amg: If True, use AMG instead of decoder-based segmentation
+        generate_kwargs: Optional decoder parameters
     """
     # Load model once
     console.print(f"[cyan]Loading model:[/cyan] {model_path}")
+    segmentation_mode = "AMG" if use_amg else "AIS (decoder-based)"
+    console.print(f"[cyan]Segmentation mode:[/cyan] {segmentation_mode}")
     try:
         predictor, segmenter = load_model_with_decoder(
             model_path=str(model_path),
             model_type=model_type,
             device=device,
+            use_amg=use_amg,
         )
         console.print("[green]✓[/green] Model loaded successfully")
     except Exception as e:
@@ -189,7 +217,9 @@ def process_hcs_plates(
     if input_path.name.endswith(".zarr"):
         # Single plate
         console.print("[cyan]Mode:[/cyan] Single plate processing")
-        process_single_plate(input_path, predictor, segmenter, label_name)
+        process_single_plate(
+            input_path, predictor, segmenter, label_name, use_amg, generate_kwargs
+        )
     else:
         # Parent directory - find all .zarr plates
         console.print("[cyan]Mode:[/cyan] Batch processing")
@@ -205,7 +235,9 @@ def process_hcs_plates(
 
         for i, plate_path in enumerate(zarr_plates, 1):
             console.print(f"\n[cyan]Processing plate {i}/{len(zarr_plates)}[/cyan]")
-            process_single_plate(plate_path, predictor, segmenter, label_name)
+            process_single_plate(
+                plate_path, predictor, segmenter, label_name, use_amg, generate_kwargs
+            )
 
 
 @app.command()
@@ -239,6 +271,26 @@ def main(
         "-d",
         help="Device to use (cuda/cpu). Auto-detect if not specified",
     ),
+    use_amg: bool = typer.Option(
+        False,
+        "--use-amg",
+        help="Use AMG (Automatic Mask Generation) instead of decoder-based segmentation",
+    ),
+    center_distance_threshold: float = typer.Option(
+        0.5,
+        "--center-dist-thresh",
+        help="Center distance threshold for decoder mode (default: 0.5)",
+    ),
+    boundary_distance_threshold: float = typer.Option(
+        0.5,
+        "--boundary-dist-thresh",
+        help="Boundary distance threshold for decoder mode (default: 0.5)",
+    ),
+    foreground_threshold: float = typer.Option(
+        0.5,
+        "--foreground-thresh",
+        help="Foreground threshold for decoder mode (default: 0.5)",
+    ),
     verbose: int = typer.Option(
         0, "--verbose", "-v", count=True, help="Increase logging verbosity"
     ),
@@ -249,6 +301,13 @@ def main(
     For single OME-Zarr images or TIFFs, use run_inference.py instead.
 
     Labels are written back to the zarr structure under labels/<label_name>.
+
+    Segmentation modes:
+    - Default (AIS): Uses trained decoder for instance segmentation
+    - AMG (--use-amg): Uses Automatic Mask Generation from micro-SAM
+
+    Decoder thresholds (AIS mode only):
+    - Adjust center-dist-thresh, boundary-dist-thresh, foreground-thresh to tune segmentation
     """
     setup_logging(verbose, console)
 
@@ -267,12 +326,22 @@ def main(
         device = "cuda" if torch.cuda.is_available() else "cpu"
     console.print(f"[cyan]Device:[/cyan] {device}")
 
+    # Prepare decoder parameters
+    generate_kwargs = {
+        "center_distance_threshold": center_distance_threshold,
+        "boundary_distance_threshold": boundary_distance_threshold,
+        "foreground_threshold": foreground_threshold,
+    }
+    console.print(f"[cyan]Decoder thresholds:[/cyan] {generate_kwargs}")
+
     process_hcs_plates(
         input_path=input_plate,
         model_path=model_path,
         model_type=model_type,
         device=device,
         label_name=label_name,
+        use_amg=use_amg,
+        generate_kwargs=generate_kwargs,
     )
 
     console.print("\n[bold green]✓ All inference complete![/bold green]")

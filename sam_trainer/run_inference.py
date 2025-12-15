@@ -37,7 +37,7 @@ from sam_trainer.utils.inference_utils import (
     postprocess_masks,
     segment_image,
 )
-from sam_trainer.utils.logging import setup_logging, get_logger
+from sam_trainer.utils.logging import get_logger, setup_logging
 
 app = typer.Typer(
     name="sam-inference",
@@ -97,6 +97,8 @@ def process_zarr_image(
     predictor,
     segmenter,
     label_name: str = "sam_labels",
+    use_amg: bool = False,
+    generate_kwargs: dict = None,
 ) -> None:
     """Process a single OME-Zarr image and write labels back to zarr.
 
@@ -105,6 +107,8 @@ def process_zarr_image(
         predictor: SAM predictor
         segmenter: SAM segmenter
         label_name: Name for the label layer (default: 'sam_labels')
+        use_amg: If True, using AMG segmentation mode
+        generate_kwargs: Optional decoder parameters
     """
     console.print(f"[cyan]Processing OME-Zarr:[/cyan] {zarr_path.name}")
 
@@ -124,7 +128,13 @@ def process_zarr_image(
         total_instances = 0
         for img_patch, lbl_writer in seg.iter_as_numpy():
             # Run segmentation on patch
-            masks = segment_image(img_patch, predictor, segmenter)
+            masks = segment_image(
+                img_patch,
+                predictor,
+                segmenter,
+                use_amg=use_amg,
+                generate_kwargs=generate_kwargs,
+            )
 
             # Write labels back to zarr
             lbl_writer(patch=masks.astype(np.uint32))
@@ -154,6 +164,8 @@ def process_tiff_images(
     min_instance_area: int,
     border_margin: int,
     max_instances: Optional[int],
+    use_amg: bool = False,
+    generate_kwargs: dict = None,
 ) -> None:
     """Process TIFF images and save masks as separate TIFF files.
 
@@ -168,6 +180,8 @@ def process_tiff_images(
         min_instance_area: Minimum area filter for postprocessing
         border_margin: Border margin filter for postprocessing
         max_instances: Maximum number of instances to keep
+        use_amg: Whether using AMG mode
+        generate_kwargs: Optional decoder parameters
     """
     # Get list of images
     image_files = sorted(input_dir.glob(pattern))
@@ -203,8 +217,10 @@ def process_tiff_images(
                     image,
                     predictor,
                     segmenter,
-                    tile_shape=tile_shape,
-                    halo=halo,
+                    use_amg=use_amg,
+                    # tile_shape=tile_shape_tuple,
+                    # halo=halo_tuple,
+                    generate_kwargs=generate_kwargs,
                 )
 
                 # Postprocess masks
@@ -297,6 +313,26 @@ def main(
         "--border-margin",
         help="Discard instances touching border within this many pixels. TIFF only.",
     ),
+    use_amg: bool = typer.Option(
+        False,
+        "--use-amg",
+        help="Use AMG (Automatic Mask Generation) instead of decoder-based segmentation",
+    ),
+    center_distance_threshold: float = typer.Option(
+        0.5,
+        "--center-dist-thresh",
+        help="Center distance threshold for decoder mode (default: 0.5)",
+    ),
+    boundary_distance_threshold: float = typer.Option(
+        0.5,
+        "--boundary-dist-thresh",
+        help="Boundary distance threshold for decoder mode (default: 0.5)",
+    ),
+    foreground_threshold: float = typer.Option(
+        0.5,
+        "--foreground-thresh",
+        help="Foreground threshold for decoder mode (default: 0.5)",
+    ),
     verbose: int = typer.Option(
         0, "--verbose", "-v", count=True, help="Increase logging verbosity"
     ),
@@ -308,6 +344,13 @@ def main(
     - OME-Zarr: Writes labels back to the zarr container (no output dir needed)
 
     For HCS plate structures, use run_inference_hcs.py instead.
+
+    Segmentation modes:
+    - Default (AIS): Uses trained decoder for instance segmentation
+    - AMG (--use-amg): Uses Automatic Mask Generation from micro-SAM
+
+    Decoder thresholds (AIS mode only):
+    - Adjust center-dist-thresh, boundary-dist-thresh, foreground-thresh to tune segmentation
     """
     setup_logging(verbose, console)
 
@@ -355,14 +398,26 @@ def main(
 
     # Load model
     console.print(f"[cyan]Loading model:[/cyan] {model}")
-    console.print("[cyan]Mode:[/cyan] Using instance segmentation decoder (NGIO-based)")
+    segmentation_mode = "AMG" if use_amg else "AIS (decoder-based)"
+    console.print(f"[cyan]Segmentation mode:[/cyan] {segmentation_mode}")
+
+    # Prepare decoder parameters
+    generate_kwargs = {
+        "center_distance_threshold": center_distance_threshold,
+        "boundary_distance_threshold": boundary_distance_threshold,
+        "foreground_threshold": foreground_threshold,
+    }
+    if not use_amg:
+        console.print(f"[cyan]Decoder thresholds:[/cyan] {generate_kwargs}")
+
     try:
         predictor, segmenter = load_model_with_decoder(
             model_path=str(model),
             model_type=model_type,
             device=device,
+            use_amg=use_amg,
         )
-        console.print("[green]✓[/green] Model and decoder loaded successfully")
+        console.print("[green]✓[/green] Model loaded successfully")
     except Exception as e:
         console.print(f"[bold red]Error loading model:[/bold red] {e}")
         logger.exception("Model loading failed")
@@ -372,7 +427,9 @@ def main(
     if is_zarr_path(input_path):
         # Single OME-Zarr image
         console.print("[cyan]Input type:[/cyan] OME-Zarr image")
-        process_zarr_image(input_path, predictor, segmenter, label_name)
+        process_zarr_image(
+            input_path, predictor, segmenter, label_name, use_amg, generate_kwargs
+        )
         console.print("\n[bold green]✓ Inference complete![/bold green]")
 
     elif input_path.is_dir():
@@ -385,7 +442,14 @@ def main(
                 f"[cyan]Input type:[/cyan] Directory with {len(zarr_images)} OME-Zarr images"
             )
             for zarr_path in zarr_images:
-                process_zarr_image(zarr_path, predictor, segmenter, label_name)
+                process_zarr_image(
+                    zarr_path,
+                    predictor,
+                    segmenter,
+                    label_name,
+                    use_amg,
+                    generate_kwargs,
+                )
             console.print("\n[bold green]✓ All inference complete![/bold green]")
 
         else:
@@ -416,6 +480,8 @@ def main(
                 min_instance_area=min_instance_area,
                 border_margin=border_margin,
                 max_instances=max_instances,
+                use_amg=use_amg,
+                generate_kwargs=generate_kwargs,
             )
             console.print("\n[bold green]✓ Inference complete![/bold green]")
             console.print(f"Results saved to: {output_dir}")

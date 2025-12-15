@@ -6,6 +6,13 @@ A lightweight Python package for training [micro-SAM](https://github.com/computa
 
 - 🔄 **Flexible data augmentation** with multiple output formats (OME-Zarr, TIF, HDF5)
 - 🎯 **Instance segmentation training** for SAM models
+- 🔬 **Production inference** with two modes:
+  - **AIS (Decoder)**: Fast instance segmentation with tunable thresholds
+  - **AMG**: Automatic Mask Generation for zero-shot segmentation
+- 🗃️ **NGIO-powered OME-Zarr support**:
+  - Single OME-Zarr images with in-place label writing
+  - HCS plate structures (wells/fields)
+  - TIFF files with optional tiling for large images
 - 🖥️ **GPU/CPU auto-detection** with automatic fallback
 - ⚙️ **Interactive config builder** with validation
 - 🚀 **HPC-ready** with SLURM batch scripts
@@ -138,17 +145,143 @@ training:
 
 ### Inference
 
-Run the bash script on the cluster or run `run_inference.py` directly:
+#### Two Segmentation Modes
+
+**1. AIS (Decoder-Based) - Default**
+
+- Uses your trained decoder for fast instance segmentation
+- Requires decoder threshold tuning for optimal results
+- Best for production inference on similar data to training
+
+**2. AMG (Automatic Mask Generation)**
+
+- Zero-shot segmentation using trained encoder
+- No threshold tuning needed
+- Better for diverse or unseen data
+
+#### TIFF/Single OME-Zarr Inference
 
 ```bash
+# AIS mode with default thresholds (0.5, 0.5, 0.5)
+pixi run python sam_trainer/run_inference.py \
+    --model final_models/best.pt \
+    --input dat/test_images/ \
+    --output results/predictions/ \
+    -vv
+
+# AIS mode with tuned thresholds
+pixi run python sam_trainer/run_inference.py \
+    --model final_models/best.pt \
+    --input dat/test_images/ \
+    --output results/predictions/ \
+    --center-dist-thresh 0.4 \
+    --boundary-dist-thresh 0.4 \
+    --foreground-thresh 0.6 \
+    -vv
+
+# AMG mode
+pixi run python sam_trainer/run_inference.py \
+    --model final_models/best.pt \
+    --input dat/test_images/ \
+    --output results/predictions/ \
+    --use-amg \
+    -vv
+
+# OME-Zarr input (labels written back to zarr)
+pixi run python sam_trainer/run_inference.py \
+    --model final_models/best.pt \
+    --input dat/test_data.zarr \
+    --label-name sam_segmentation \
+    -vv
+
+# Large images with tiling
+pixi run python sam_trainer/run_inference.py \
+    --model final_models/best.pt \
+    --input dat/large_images/ \
+    --output results/predictions/ \
+    --tile-shape 512,512 \
+    --halo 64,64 \
+    -vv
+```
+
+#### HCS Plate Inference
+
+```bash
+# Process entire HCS plate with AIS mode
+pixi run python sam_trainer/run_inference_hcs.py \
+    --input dat/exp168-diff8.zarr \
+    --model final_models/best.pt \
+    --label-name ais_default \
+    -vv
+
+# Process specific wells only
+pixi run python sam_trainer/run_inference_hcs.py \
+    --input dat/exp168-diff8.zarr \
+    --model final_models/best.pt \
+    --wells B02 B03 C02 \
+    -vv
+
+# AMG mode on HCS plate
+pixi run python sam_trainer/run_inference_hcs.py \
+    --input dat/exp168-diff8.zarr \
+    --model final_models/best.pt \
+    --use-amg \
+    -vv
+```
+
+#### SLURM Submission
+
+```bash
+# TIFF/single zarr inference
 sbatch scripts/submit_inference.sh \
-    runs/my_experiment/checkpoints/best.pt \
+    final_models/best.pt \
     dat/test_images/ \
-    runs/my_experiment/predictions/ \
-    --use-decoder \
+    results/predictions/ \
     --center-dist-thresh 0.4 \
     --boundary-dist-thresh 0.4
+
+# HCS plate inference
+sbatch scripts/submit_inference_hcs.sh \
+    final_models/best.pt \
+    dat/exp168-diff8.zarr \
+    ais_relaxed \
+    --center-dist-thresh 0.6 \
+    --boundary-dist-thresh 0.6 \
+    --foreground-thresh 0.4
 ```
+
+#### Decoder Threshold Tuning
+
+The three decoder thresholds control how distance maps convert to instance masks:
+
+- **`center_distance_threshold`** (default: 0.5): Controls center point detection
+- **`boundary_distance_threshold`** (default: 0.5): Controls boundary detection
+- **`foreground_threshold`** (default: 0.5): Controls foreground/background separation
+
+**Guidelines:**
+
+- **Lower thresholds** (0.3-0.4): More permissive, finds more instances, possible false positives
+- **Higher thresholds** (0.6-0.7): More strict, fewer instances, possible false negatives
+- **Default (0.5)**: Balanced, good starting point
+
+**Recommended approach:**
+
+1. Start with defaults (0.5, 0.5, 0.5)
+2. If under-segmenting: try relaxed (0.6, 0.6, 0.4)
+3. If over-segmenting: try strict (0.4, 0.4, 0.6)
+4. Use test scripts to compare multiple configurations
+
+#### Testing Multiple Configurations
+
+```bash
+# Test HCS plate with 4 different configurations
+bash test_inference_commands.sh
+
+# Test TIFF/zarr with 4 different configurations
+bash test_inference_tiff_commands.sh
+```
+
+Results will be saved as separate label layers for side-by-side comparison in napari.
 
 ## Configuration Reference
 
@@ -266,6 +399,68 @@ runs/
 
 The package automatically detects GPU availability and falls back to CPU if needed.
 
+## Model Loading (Critical for Inference)
+
+**IMPORTANT**: Always use the correct micro-SAM API to load your trained model.
+
+### ✅ Correct Pattern
+
+```python
+from micro_sam.automatic_segmentation import get_predictor_and_segmenter
+
+# Load model with decoder (AIS mode)
+predictor, segmenter = get_predictor_and_segmenter(
+    model_type="vit_b_lm",
+    checkpoint="final_models/best.pt",
+    device="cuda",
+    amg=False  # Use trained decoder
+)
+
+# For decoder mode: MUST initialize before generate
+segmenter.initialize(image)
+predictions = segmenter.generate(
+    center_distance_threshold=0.5,
+    boundary_distance_threshold=0.5,
+    foreground_threshold=0.5
+)
+
+# Load model with AMG
+predictor, segmenter = get_predictor_and_segmenter(
+    model_type="vit_b_lm",
+    checkpoint="final_models/best.pt",
+    device="cuda",
+    amg=True  # Use automatic mask generation
+)
+
+# For AMG mode: use automatic_instance_segmentation
+from micro_sam.instance_segmentation import automatic_instance_segmentation
+masks = automatic_instance_segmentation(
+    predictor, segmenter, input_path, output_path
+)
+```
+
+### ❌ Common Mistakes
+
+```python
+# DON'T: Manually construct segmenter without loading checkpoint
+from micro_sam.automatic_segmentation import get_amg
+segmenter = get_amg(predictor, ...)  # Uses pretrained SAM, ignores your checkpoint!
+
+# DON'T: Call generate without initialize (decoder mode)
+predictions = segmenter.generate(...)  # Will produce garbage without initialize()
+
+# DON'T: Forget decoder thresholds
+predictions = segmenter.generate()  # Missing threshold parameters!
+```
+
+### Implementation Details
+
+See `sam_trainer/utils/inference_utils.py` for the reference implementation:
+
+- **`load_model_with_decoder()`**: Wraps `get_predictor_and_segmenter()` with proper checkpoint loading
+- **`segment_image()`**: Handles both AIS and AMG modes with correct initialization patterns
+- **`postprocess_masks()`**: Optional filtering by area, border margin, and instance count
+
 ## Troubleshooting
 
 ### Import Errors
@@ -317,22 +512,37 @@ pixi run config -o test_config.yaml
 
 ```text
 sam_trainer/
-├── sam_trainer/              # Main package
+├── sam_trainer/                      # Main package
 │   ├── __init__.py
-│   ├── config.py             # Pydantic schemas
-│   ├── io.py                 # Multi-format I/O
-│   ├── augmentation.py       # Data augmentation
-│   ├── training.py           # Training logic
-│   └── cli.py                # CLI commands
+│   ├── config.py                     # Pydantic schemas
+│   ├── io.py                         # Multi-format I/O
+│   ├── augmentation.py               # Data augmentation
+│   ├── training.py                   # Training logic
+│   ├── cli.py                        # CLI commands
+│   ├── run_inference.py              # TIFF/single zarr inference
+│   ├── run_inference_hcs.py          # HCS plate inference
+│   └── utils/
+│       ├── inference_utils.py        # Shared inference utilities
+│       └── logging.py                # Centralized logging
 ├── scripts/
-│   └── submit_training.sh    # SLURM batch script
-├── dat/                      # Local data directory (gitignored)
-├── runs/                     # Training outputs (gitignored)
-├── pixi.toml                 # Environment definition
-├── pixi.lock                 # Locked dependencies
-├── example_config.yaml       # Example configuration
-├── .gitignore                # Git ignore rules
-└── README.md                 # This file
+│   ├── submit_training_a100.sh       # SLURM training (A100)
+│   ├── submit_training_a40.sh        # SLURM training (A40)
+│   ├── submit_inference.sh           # SLURM inference (TIFF/zarr)
+│   └── submit_inference_hcs.sh       # SLURM inference (HCS)
+├── configs/                          # Training configurations
+│   ├── full_sam_vit_b_a100.yaml
+│   ├── zarr_a100.yaml
+│   └── ...
+├── dat/                              # Local data directory (gitignored)
+├── runs/                             # Training outputs (gitignored)
+├── final_models/                     # Exported models
+├── test_inference_commands.sh        # HCS test suite
+├── test_inference_tiff_commands.sh   # TIFF/zarr test suite
+├── INFERENCE_REFACTOR.md             # Inference refactor documentation
+├── pixi.toml                         # Environment definition
+├── pixi.lock                         # Locked dependencies
+├── .gitignore                        # Git ignore rules
+└── README.md                         # This file
 ```
 
 ## Contributing
@@ -350,24 +560,10 @@ Built on top of:
 - [micro-SAM](https://github.com/computational-cell-analytics/micro-sam)
 - [torch-em](https://github.com/constantinpape/torch-em)
 - [albumentations](https://github.com/albumentations-team/albumentations)
+- [NGIO](https://github.com/fractal-analytics-platform/ngio) - OME-Zarr I/O
 
-# Basic usage
+## Additional Resources
 
-python scripts/run_inference.py \
-    --model runs/training_original_images/checkpoints/training_original_40_images/best.pt \
-    --input dat/test_images/ \
-    --output results/predictions/
-
-# With verbosity
-
-python scripts/run_inference.py -m model.pt -i images/ -o masks/ -vv
-
-# With tiling for large images (recommended for 2048x2048+ images)
-
-python scripts/run_inference.py \
-    -m model.pt -i images/ -o masks/ \
-    --tile-shape 512,512 --halo 64,64
-
-# Different file pattern
-
-python scripts/run_inference.py -m model.pt -i images/ -o masks/ --pattern "*.tiff"
+- **Inference Refactor Documentation**: See `INFERENCE_REFACTOR.md` for details on the correct micro-SAM API usage
+- **AI Agent Instructions**: See `.github/copilot-instructions.md` for codebase conventions
+- **Test Suites**: Run `test_inference_commands.sh` or `test_inference_tiff_commands.sh` to compare segmentation modes

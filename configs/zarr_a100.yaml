@@ -15,8 +15,8 @@ training:
   n_epochs: 200  # Longer training since we see each image once per epoch
   n_samples: null  # null = use actual dataset size (all images, no random sampling)
   num_workers: 12  # Increased from 4 to utilize available CPUs
-  learning_rate: 5.0e-5
-  early_stopping: 20  # Allow 50 epochs without improvement before stopping
+  learning_rate: 1.0e-5
+  early_stopping: 25  # Allow 50 epochs without improvement before stopping
   # Zarr mode doesn't use val_split (data is pre-split)
   shuffle_data: false
   shuffle_seed: null
@@ -24,6 +24,6 @@ training:
   use_min_instance_sampler: false  # Disabled - full images always have instances
   min_instances_per_patch: 1  # Not used when sampler disabled
   min_instance_size: 10  # Keep all objects ≥10 pixel (effectively no filtering)
-  save_validation_predictions_frequency: 1
+  save_validation_predictions_frequency: 5
   checkpoint_name: "SWI_zarr_a100"
   resume_from_checkpoint: null
