@@ -1,2 +1,7 @@
 # SCM syntax highlighting & preventing 3-way merges
 pixi.lock merge=binary linguist-language=YAML linguist-generated=true
+
+# Normalize line endings across platforms.
+# - Treat files as text when safe (`text=auto`), and keep LF in the working tree.
+# - Binary files are automatically excluded by `text=auto`.
+* text=auto eol=lf

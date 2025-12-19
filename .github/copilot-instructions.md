@@ -20,6 +20,11 @@ A training and inference framework for microscopy instance segmentation using [m
 
 ## Critical Conventions
 
+### Line Endings (LF Only)
+- This repo is primarily executed on Linux/HPC. Text files must use LF line endings.
+- Enforce LF via `.gitattributes` (`* text=auto eol=lf`) and `.editorconfig` (`end_of_line = lf`).
+- Avoid introducing CRLF from Windows editors; if Git shows a “full-file changed” diff with no visible edits, check for CRLF↔LF conversion.
+
 ### Config Files (`configs/*.yaml`)
 - **Naming**: `{purpose}_{model}_{gpu}[_variant].yaml` (e.g., `full_sam_vit_b_a100_high_lr.yaml`)
 - **Distinguish hardware**: A100 configs (80GB VRAM) use `batch_size: 4`, A40 (48GB) use `batch_size: 1`
