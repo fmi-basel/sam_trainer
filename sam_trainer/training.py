@@ -34,7 +34,16 @@ class PercentileNormalizer:
 
     def __call__(self, raw):
         arr = np.asarray(raw, dtype=np.float32)
-        lo, hi = np.percentile(arr, [self.lower, self.upper])
+
+        # Robust normalization: Calculate percentiles only on non-padded (non-zero) pixels
+        # to avoid skewing contrast due to zero-padding.
+        mask = arr > 0
+        if mask.any():
+            lo, hi = np.percentile(arr[mask], [self.lower, self.upper])
+        else:
+            # Fallback if image is all zeros
+            lo, hi = np.percentile(arr, [self.lower, self.upper])
+
         if hi <= lo:
             lo = float(arr.min())
             hi = float(arr.max())
@@ -200,6 +209,7 @@ def run_training(config: TrainingConfig, output_dir: Path) -> dict[str, Path]:
             label_key=config.label_key,
             is_train=True,
             sampler=train_sampler,
+            is_seg_dataset=True,  # Explicitly tell torch_em this is a segmentation dataset
             **loader_kwargs,
         )
 
@@ -210,6 +220,7 @@ def run_training(config: TrainingConfig, output_dir: Path) -> dict[str, Path]:
             label_key=config.label_key,
             is_train=False,
             sampler=val_sampler,
+            is_seg_dataset=True,  # Explicitly tell torch_em this is a segmentation dataset
             **loader_kwargs,
         )
 
