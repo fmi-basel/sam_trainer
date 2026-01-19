@@ -1,4 +1,4 @@
-experiment_name: "SWI_zarr_a100_correct_patchsize"
+experiment_name: "SWI_zarr_a100_segdata_fix"
 output_base_dir: "runs"
 augmentation: null
 training:
@@ -25,5 +25,5 @@ training:
   min_instances_per_patch: 1  # Not used when sampler disabled
   min_instance_size: 10  # Keep all objects ≥10 pixel (effectively no filtering)
   save_validation_predictions_frequency: 5
-  checkpoint_name: "SWI_zarr_a100_correct_patchsize"
+  checkpoint_name: "SWI_zarr_a100_segdata_fix"
   resume_from_checkpoint: null

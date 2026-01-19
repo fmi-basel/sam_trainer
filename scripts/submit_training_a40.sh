@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --account=dlthings
-#SBATCH --job-name=full_img_sam_train_a40
+#SBATCH --job-name=sam_train_a40
 #SBATCH --cpus-per-task=20
 #SBATCH --ntasks=1
 #SBATCH --nodes=1

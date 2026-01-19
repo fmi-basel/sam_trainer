@@ -1,4 +1,4 @@
-experiment_name: "SWI_zarr_a40"
+experiment_name: "SWI_zarr_a40_segdata_fix"
 output_base_dir: "runs"
 augmentation: null
 training:
@@ -10,7 +10,7 @@ training:
   raw_key: "0"  # Key for raw images in zarr
   label_key: "labels/mask/0"  # Key for labels in zarr
   model_type: "vit_b_lm"
-  patch_shape: [2048, 2048]  # Full image size - no cropping/patching
+  patch_shape: [1200, 1200]  # Full image size - no cropping/patching
   batch_size: 3  # Increased from 1 - plenty of GPU memory available
   n_epochs: 200  # Longer training since we see each image once per epoch
   n_samples: null  # null = use actual dataset size (all images, no random sampling)
@@ -23,7 +23,7 @@ training:
   train_instance_segmentation_only: false  # Train full SAM model
   use_min_instance_sampler: false  # Disabled - full images always have instances
   min_instances_per_patch: 1  # Not used when sampler disabled
-  min_instance_size: 1  # Keep all objects ≥1 pixel (effectively no filtering)
+  min_instance_size: 10  # Keep all objects ≥1 pixel (effectively no filtering)
   save_validation_predictions_frequency: 1
-  checkpoint_name: "SWI_zarr_a40"
+  checkpoint_name: "SWI_zarr_a40_segdata_fix"
   resume_from_checkpoint: null

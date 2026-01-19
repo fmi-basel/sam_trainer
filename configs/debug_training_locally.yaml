@@ -1,0 +1,29 @@
+experiment_name: "debug_training_zarr"
+output_base_dir: "runs"
+augmentation: null
+training:
+  # Zarr mode - provide separate train/val containers
+  images_dir: null
+  labels_dir: null
+  train_zarr_path: "W:/groups/scratch/gmicro_prefect/ggrossha/ggrossha_SWI/training_data/accumulated_train.zarr"
+  val_zarr_path: "W:/groups/scratch/gmicro_prefect/ggrossha/ggrossha_SWI/training_data/accumulated_val.zarr"
+  raw_key: "0"  # Key for raw images in zarr
+  label_key: "labels/mask/0"  # Key for labels in zarr
+  model_type: "vit_b_lm"
+  patch_shape: [1200, 1200]  # Full image size - no cropping/patching
+  batch_size: 6  # Increased from 1 - plenty of GPU memory available
+  n_epochs: 200  # Longer training since we see each image once per epoch
+  n_samples: null  # null = use actual dataset size (all images, no random sampling)
+  num_workers: 0  # Set to 0 for debugging on Windows to avoid timeouts
+  learning_rate: 1.0e-5
+  early_stopping: 25  # Allow 50 epochs without improvement before stopping
+  # Zarr mode doesn't use val_split (data is pre-split)
+  shuffle_data: false
+  shuffle_seed: null
+  train_instance_segmentation_only: false  # Train full SAM model
+  use_min_instance_sampler: false  # Disabled - full images always have instances
+  min_instances_per_patch: 1  # Not used when sampler disabled
+  min_instance_size: 10  # Keep all objects ≥10 pixel (effectively no filtering)
+  save_validation_predictions_frequency: 5
+  checkpoint_name: "debug_training_zarr"
+  resume_from_checkpoint: null
