@@ -58,10 +58,11 @@ def save_prediction_overlay(
     fig, ax = plt.subplots(figsize=(10, 10))
     ax.imshow(image, cmap="gray", interpolation="nearest")
 
-    if n_instances > 0:
-        cmap = create_colormap(n_instances)
-        masked_labels = np.ma.masked_where(prediction == 0, prediction)
-        ax.imshow(masked_labels, cmap=cmap, alpha=alpha, interpolation="nearest")
+    # if n_instances > 0:
+    #     cmap = create_colormap(n_instances)
+    #     masked_labels = np.ma.masked_where(prediction == 0, prediction)
+    #     ax.imshow(masked_labels, cmap=cmap, alpha=alpha, interpolation="nearest")
+    ax.imshow(prediction, cmap="viridis", alpha=alpha, interpolation="nearest")
 
     ax.set_title(f"Validation Prediction ({n_instances} instances)", fontsize=12)
     ax.axis("off")

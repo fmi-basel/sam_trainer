@@ -5,6 +5,8 @@ training:
   # Zarr mode - provide separate train/val containers
   images_dir: null
   labels_dir: null
+  # images_dir: "dat/training_data/images"
+  # labels_dir: "dat/training_data/labels"
   train_zarr_path: "W:/groups/scratch/gmicro_prefect/ggrossha/ggrossha_SWI/training_data/accumulated_train.zarr"
   val_zarr_path: "W:/groups/scratch/gmicro_prefect/ggrossha/ggrossha_SWI/training_data/accumulated_val.zarr"
   raw_key: "0"  # Key for raw images in zarr
@@ -16,6 +18,7 @@ training:
   n_samples: null  # null = use actual dataset size (all images, no random sampling)
   num_workers: 0  # Set to 0 for debugging on Windows to avoid timeouts
   learning_rate: 1.0e-5
+  with_segmentation_decoder: false # Disable UNETR decoder to simplify labels (removes float channels)
   early_stopping: 25  # Allow 50 epochs without improvement before stopping
   # Zarr mode doesn't use val_split (data is pre-split)
   shuffle_data: false

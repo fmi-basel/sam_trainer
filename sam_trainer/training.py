@@ -44,54 +44,65 @@ def check_and_visualize_batch(loader, output_dir: Path, name: str):
         logger.info(f"{name} batch shapes - x: {x_np.shape}, y: {y_np.shape}")
         logger.info(f"{name} batch dtypes - x: {x_np.dtype}, y: {y_np.dtype}")
 
-        # Check unique values in labels
-        unique_labels = np.unique(y_np)
-        logger.info(f"{name} unique labels: {unique_labels}")
+        # Check y channels
+        if y_np.ndim == 4:  # B, C, H, W
+            n_channels = y_np.shape[1]
+            logger.info(f"{name} labels have {n_channels} channels. Inspecting each...")
+            for c in range(n_channels):
+                y_c = y_np[:, c]  # All batches, channel c
+                unique_c = np.unique(y_c)
+                is_float = np.issubdtype(y_c.dtype, np.floating)
 
-        # Check if float
-        if np.issubdtype(y_np.dtype, np.floating):
-            logger.warning(
-                f"ALERT: {name} labels are float! unique values: {unique_labels}"
-            )
+                # Check for float values that are NOT integers
+                has_decimals = False
+                if is_float:
+                    # Check if any value has non-zero decimal part
+                    # Use tolerance for float arithmetic
+                    has_decimals = not np.allclose(
+                        unique_c, np.round(unique_c), atol=1e-6
+                    )
 
-            # Check if they look like integers stored as floats
-            is_integer_like = np.all(np.mod(unique_labels, 1) == 0)
-            if not is_integer_like:
-                logger.error(f"CRITICAL: {name} labels contain non-integer values!")
-            else:
-                logger.warning(
-                    f"{name} labels are floats but contain only integer-like values."
+                logger.info(
+                    f"  Channel {c}: dtype={y_c.dtype}, range=[{unique_c.min():.4f}, {unique_c.max():.4f}], has_decimals={has_decimals}"
                 )
-
-        # Check expected range [0, 1] for binary/single instance
-        # Note: If patches are empty, might be only [0]
-        unexpected = [v for v in unique_labels if v not in [0, 1]]
-        if unexpected:
-            logger.warning(
-                f"{name} labels contain unexpected values (expected [0, 1] for single instance): {unexpected}"
-            )
-        else:
-            logger.info(f"{name} labels values are within expected range [0, 1].")
+                if len(unique_c) < 20:
+                    logger.info(f"    Unique values: {unique_c}")
+                else:
+                    logger.info(f"    Unique values (first 5): {unique_c[:5]} ...")
 
         # Visualize first sample in batch
         # Handle shapes: (B, C, H, W) -> (H, W) for visualization
         img = x_np[0]
-        lbl = y_np[0, 0]
+        lbl = y_np[0]
 
-        # Remove channel dim if present
+        # Remove channel dim if present from image
         if img.ndim == 3:
             img = img[0]  # Take first channel if (C, H, W)
 
-        if lbl.ndim == 3:
-            lbl = lbl[0]  # Take first channel if (C, H, W)
+        # For labels, if multi-channel, likely:
+        # 0: Foreground?
+        # 1: Distances?
+        # -1: Instances?  (Usually last)
+        # We will visualize channel 0 and the last channel
 
+        lbl_vis = lbl[0] if lbl.ndim == 3 else lbl
         save_prediction_overlay(
-            img, lbl.astype(int), debug_dir / f"{name}_batch_sample.png"
+            img, lbl_vis.astype(int), debug_dir / f"{name}_batch_sample_ch0.png"
         )
-        logger.info(f"Saved visualization to {debug_dir / f'{name}_batch_sample.png'}")
+
+        if lbl.ndim == 3 and lbl.shape[0] > 1:
+            # Visualize last channel (often instances)
+            lbl_inst = lbl[-1]
+            save_prediction_overlay(
+                img,
+                lbl_inst.astype(int),
+                debug_dir / f"{name}_batch_sample_last_ch.png",
+            )
+
+        logger.info(f"Saved visualizations to {debug_dir}")
 
     except Exception as e:
-        logger.error(f"Failed to check/visualize {name} batch: {e}")
+        logger.error(f"Failed to check/visualize {name} batch: {e}", exc_info=True)
 
 
 class PercentileNormalizer:
@@ -243,7 +254,7 @@ def run_training(config: TrainingConfig, output_dir: Path) -> dict[str, Path]:
     loader_kwargs = {
         "batch_size": config.batch_size,
         "patch_shape": config.patch_shape,
-        "with_segmentation_decoder": True,
+        "with_segmentation_decoder": config.with_segmentation_decoder,
         "train_instance_segmentation_only": config.train_instance_segmentation_only,
         "n_samples": config.n_samples,
         "num_workers": config.num_workers,
@@ -381,7 +392,7 @@ def run_training(config: TrainingConfig, output_dir: Path) -> dict[str, Path]:
         # Only override verify_n_labels_in_loader to skip pre-training validation
         # Don't override n_objects_per_batch - let it use default behavior (25 with smart subsampling)
         train_sam(
-            with_segmentation_decoder=True,
+            with_segmentation_decoder=config.with_segmentation_decoder,
             verify_n_labels_in_loader=None,
             **base_kwargs,
         )

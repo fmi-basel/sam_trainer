@@ -64,30 +64,28 @@ class TrainingConfig(BaseModel):
 
     # Data paths - Traditional mode
     images_dir: Optional[Path] = Field(
-        default=None, 
-        description="Directory containing training images (traditional mode only)"
+        default=None,
+        description="Directory containing training images (traditional mode only)",
     )
     labels_dir: Optional[Path] = Field(
-        default=None, 
-        description="Directory containing label masks (traditional mode only)"
+        default=None,
+        description="Directory containing label masks (traditional mode only)",
     )
-    
+
     # Data paths - Zarr mode
     train_zarr_path: Optional[Path] = Field(
-        default=None,
-        description="Path to training zarr container (zarr mode only)"
+        default=None, description="Path to training zarr container (zarr mode only)"
     )
     val_zarr_path: Optional[Path] = Field(
-        default=None,
-        description="Path to validation zarr container (zarr mode only)"
+        default=None, description="Path to validation zarr container (zarr mode only)"
     )
     raw_key: Optional[str] = Field(
         default=None,
-        description="Key for raw data in zarr containers (e.g., '0'). Required for zarr mode."
+        description="Key for raw data in zarr containers (e.g., '0'). Required for zarr mode.",
     )
     label_key: Optional[str] = Field(
         default=None,
-        description="Key for labels in zarr containers (e.g., 'labels/mask/0'). Required for zarr mode."
+        description="Key for labels in zarr containers (e.g., 'labels/mask/0'). Required for zarr mode.",
     )
 
     # Model configuration
@@ -131,6 +129,10 @@ class TrainingConfig(BaseModel):
     train_instance_segmentation_only: bool = Field(
         default=True,
         description="If True, train only the instance decoder; if False, fine-tune the full SAM",
+    )
+    with_segmentation_decoder: bool = Field(
+        default=True,
+        description="If True, add an additional UNETR decoder for automatic instance segmentation (creates multi-channel labels). If False, only train standard SAM.",
     )
     normalize_inputs: bool = Field(
         default=True,
@@ -203,7 +205,7 @@ class TrainingConfig(BaseModel):
                 "normalize_upper_percentile must be greater than normalize_lower_percentile"
             )
         return v
-    
+
     @field_validator("label_key")
     @classmethod
     def validate_data_paths(cls, v: Optional[str], info) -> Optional[str]:
@@ -213,24 +215,24 @@ class TrainingConfig(BaseModel):
         images_dir = info.data.get("images_dir")
         labels_dir = info.data.get("labels_dir")
         raw_key = info.data.get("raw_key")
-        
+
         # Check if zarr mode
         zarr_mode = train_zarr is not None or val_zarr is not None
         # Check if traditional mode
         trad_mode = images_dir is not None or labels_dir is not None
-        
+
         if zarr_mode and trad_mode:
             raise ValueError(
                 "Cannot use both zarr mode (train_zarr_path/val_zarr_path) and "
                 "traditional mode (images_dir/labels_dir) simultaneously. Choose one."
             )
-        
+
         if not zarr_mode and not trad_mode:
             raise ValueError(
                 "Must specify either zarr paths (train_zarr_path, val_zarr_path) "
                 "or traditional directories (images_dir, labels_dir)"
             )
-        
+
         # Validate zarr mode requirements
         if zarr_mode:
             if not train_zarr or not val_zarr:
@@ -242,22 +244,19 @@ class TrainingConfig(BaseModel):
                     "Zarr mode requires both raw_key and label_key. "
                     "Example: raw_key='0', label_key='labels/mask/0'"
                 )
-        
+
         # Validate traditional mode requirements
         if trad_mode:
             if not images_dir or not labels_dir:
                 raise ValueError(
                     "Traditional mode requires both images_dir and labels_dir"
                 )
-        
+
         return v
-    
+
     def is_zarr_mode(self) -> bool:
         """Check if configuration is in zarr container mode."""
-        return (
-            self.train_zarr_path is not None and 
-            self.val_zarr_path is not None
-        )
+        return self.train_zarr_path is not None and self.val_zarr_path is not None
 
     class Config:
         extra = "forbid"
