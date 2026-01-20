@@ -19,12 +19,79 @@ from sam_trainer.config import TrainingConfig
 from sam_trainer.io import get_image_paths
 from sam_trainer.visualization import (
     create_predictor_and_segmenter,
+    save_prediction_overlay,
     save_validation_predictions,
 )
 
 logger = logging.getLogger(__name__)
 
-# TODO Add a global var for where to save new models downloaded during the run. Potentially outside of the script here
+
+def check_and_visualize_batch(loader, output_dir: Path, name: str):
+    """Check data integrity and visualize one batch."""
+    logger.info(f"Checking first batch of {name} loader...")
+    debug_dir = output_dir / "debug_data"
+    debug_dir.mkdir(exist_ok=True, parents=True)
+
+    try:
+        # Get one batch
+        # default_sam_loader returns (x, y)
+        x, y = next(iter(loader))
+
+        # Convert to numpy
+        x_np = x.detach().cpu().numpy()
+        y_np = y.detach().cpu().numpy()
+
+        logger.info(f"{name} batch shapes - x: {x_np.shape}, y: {y_np.shape}")
+        logger.info(f"{name} batch dtypes - x: {x_np.dtype}, y: {y_np.dtype}")
+
+        # Check unique values in labels
+        unique_labels = np.unique(y_np)
+        logger.info(f"{name} unique labels: {unique_labels}")
+
+        # Check if float
+        if np.issubdtype(y_np.dtype, np.floating):
+            logger.warning(
+                f"ALERT: {name} labels are float! unique values: {unique_labels}"
+            )
+
+            # Check if they look like integers stored as floats
+            is_integer_like = np.all(np.mod(unique_labels, 1) == 0)
+            if not is_integer_like:
+                logger.error(f"CRITICAL: {name} labels contain non-integer values!")
+            else:
+                logger.warning(
+                    f"{name} labels are floats but contain only integer-like values."
+                )
+
+        # Check expected range [0, 1] for binary/single instance
+        # Note: If patches are empty, might be only [0]
+        unexpected = [v for v in unique_labels if v not in [0, 1]]
+        if unexpected:
+            logger.warning(
+                f"{name} labels contain unexpected values (expected [0, 1] for single instance): {unexpected}"
+            )
+        else:
+            logger.info(f"{name} labels values are within expected range [0, 1].")
+
+        # Visualize first sample in batch
+        # Handle shapes: (B, C, H, W) -> (H, W) for visualization
+        img = x_np[0]
+        lbl = y_np[0, 0]
+
+        # Remove channel dim if present
+        if img.ndim == 3:
+            img = img[0]  # Take first channel if (C, H, W)
+
+        if lbl.ndim == 3:
+            lbl = lbl[0]  # Take first channel if (C, H, W)
+
+        save_prediction_overlay(
+            img, lbl.astype(int), debug_dir / f"{name}_batch_sample.png"
+        )
+        logger.info(f"Saved visualization to {debug_dir / f'{name}_batch_sample.png'}")
+
+    except Exception as e:
+        logger.error(f"Failed to check/visualize {name} batch: {e}")
 
 
 class PercentileNormalizer:
@@ -269,6 +336,10 @@ def run_training(config: TrainingConfig, output_dir: Path) -> dict[str, Path]:
         )
 
     logger.info(f"Train batches: {len(train_loader)}, Val batches: {len(val_loader)}")
+
+    # Check and visualize first batches
+    check_and_visualize_batch(train_loader, output_dir, "train")
+    check_and_visualize_batch(val_loader, output_dir, "val")
 
     # Set up checkpoint directory
     # Note: micro-SAM's trainers will create checkpoints/<name>/ under save_root

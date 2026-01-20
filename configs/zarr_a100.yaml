@@ -15,7 +15,7 @@ training:
   n_epochs: 200  # Longer training since we see each image once per epoch
   n_samples: null  # null = use actual dataset size (all images, no random sampling)
   num_workers: 12  # Increased from 4 to utilize available CPUs
-  learning_rate: 1.0e-5
+  learning_rate: 5.0e-4
   early_stopping: 25  # Allow 50 epochs without improvement before stopping
   # Zarr mode doesn't use val_split (data is pre-split)
   shuffle_data: false
