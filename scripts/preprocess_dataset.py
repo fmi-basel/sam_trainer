@@ -63,7 +63,7 @@ def preprocess_zarr(
     chunks = raw_arr_in.chunks
 
     # Compressor
-    compressor = zarr.Blosc(cname="zstd", clevel=3, shuffle=zarr.Blosc.SHUFFLE)
+    compressor = zarr.Blosc(cname="lz4", clevel=5, shuffle=zarr.Blosc.SHUFFLE)
 
     raw_arr_out = store_out.create_dataset(
         raw_key,
