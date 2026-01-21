@@ -12,7 +12,6 @@ from pathlib import Path
 import numpy as np
 import zarr
 from skimage import exposure
-from tqdm import tqdm
 
 # Setup logging
 logging.basicConfig(level=logging.INFO, format="[%(asctime)s] %(message)s")
@@ -89,8 +88,13 @@ def preprocess_zarr(
     inverted_count = 0
 
     logger.info(f"Processing {n_samples} samples...")
+    log_interval = max(1, n_samples // 20)  # Log every ~5%
 
-    for i in tqdm(range(n_samples)):
+    for i in range(n_samples):
+        # Log progress periodically
+        if i % log_interval == 0:
+            logger.info(f"  Progress: {i}/{n_samples} ({i / n_samples * 100:.1f}%)")
+
         # Load
         raw = raw_arr_in[i]
         lbl = lbl_arr_in[i]
@@ -98,24 +102,9 @@ def preprocess_zarr(
         # 1. Determine Polarity (Label Guided)
         processed_raw = raw.copy()
 
-        fg_mask = lbl > 0
-        # Background is where (Label == 0) AND (Raw > 0) [Ignore padding]
-        bg_mask = (lbl == 0) & (raw > 0)
-
-        if np.any(fg_mask) and np.any(bg_mask):
-            mean_fg = np.mean(raw[fg_mask])
-            mean_bg = np.mean(raw[bg_mask])
-
-            is_bright_obj = mean_fg > mean_bg
-
-            # If we want Dark Object, but have Bright -> Invert
-            if target_dark_object and is_bright_obj:
-                # Inversion logic for uint16/float data respecting the valid range
-                # We need to invert carefully to preserve padding as 0?
-                # Actually, padding (0) typically implies "no info".
-                # If we invert, "no info" might become "brightest white"?
-                # Usually better to normalize first, then invert.
-                pass
+        # Create foreground/background masks from labels
+        fg_mask = lbl > 0  # Foreground = instances
+        bg_mask = (lbl == 0) & (raw > 0)  # Background = non-padded areas without labels
 
         # Let's Normalize first (Robust to padding), then Invert, then Mask Padding back to 0
 
@@ -139,9 +128,8 @@ def preprocess_zarr(
         arr = (arr - lo) / (hi - lo)
 
         # --- Inversion (on normalized 0-1 float) ---
-        # Re-calc polarity on normalized data to be sure
+        # Check if we need to invert based on foreground vs background brightness
         if np.any(fg_mask) and np.any(bg_mask):
-            # Update masks? No, locations are same.
             mean_fg = np.mean(arr[fg_mask])
             mean_bg = np.mean(arr[bg_mask])
             is_bright_obj = mean_fg > mean_bg
@@ -174,24 +162,18 @@ def preprocess_zarr(
 if __name__ == "__main__":
     # Config
     train_in = Path(
-        "W:/groups/scratch/gmicro_prefect/ggrossha/ggrossha_SWI/training_data/accumulated_train.zarr"
+        "/tachyon/groups/scratch/gmicro_prefect/ggrossha/ggrossha_SWI/training_data/accumulated_train.zarr"
     )
     val_in = Path(
-        "W:/groups/scratch/gmicro_prefect/ggrossha/ggrossha_SWI/training_data/accumulated_val.zarr"
+        "/tachyon/groups/scratch/gmicro_prefect/ggrossha/ggrossha_SWI/training_data/accumulated_val.zarr"
     )
+
+    logger.info(f"Loading Training data: {train_in}")
+    logger.info(f"Loading Validation data: {val_in}")
 
     # Output names
-    train_out = train_in.parent / f"{train_in.stem}_preprocessed.zarr"
-    val_out = val_in.parent / f"{val_in.stem}_preprocessed.zarr"
+    train_out = train_in.parent / f"{train_in.stem}_preprocessed_noclahe.zarr"
+    val_out = val_in.parent / f"{val_in.stem}_preprocessed_noclahe.zarr"
 
-    preprocess_zarr(
-        train_in,
-        train_out,
-        "0",
-        "labels/mask/0",
-        enhance_contrast=True,
-        limit_fraction=0.1,
-    )
-    preprocess_zarr(
-        val_in, val_out, "0", "labels/mask/0", enhance_contrast=True, limit_fraction=0.1
-    )
+    preprocess_zarr(train_in, train_out, "0", "labels/mask/0", enhance_contrast=False)
+    preprocess_zarr(val_in, val_out, "0", "labels/mask/0", enhance_contrast=False)
