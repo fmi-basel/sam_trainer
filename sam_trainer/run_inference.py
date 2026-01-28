@@ -321,7 +321,7 @@ def main(
         help="Drop instances smaller than this area (pixels). TIFF only.",
     ),
     min_file_size_kb: float = typer.Option(
-        0,
+        50,
         "--min-file-size",
         help="Skip files smaller than this size in KB (0 = no filter). TIFF only.",
     ),

@@ -4,7 +4,7 @@
 #SBATCH --cpus-per-task=8
 #SBATCH --ntasks=1
 #SBATCH --nodes=1
-#SBATCH --partition=main,several,short
+#SBATCH --partition=main,several
 #SBATCH --mem=32G
 #SBATCH --gres=gpu:1
 #SBATCH --time=08:00:00
@@ -62,6 +62,8 @@ echo "[INFO] Extra Args: $@"
 if [ -n "$OUTPUT_DIR" ]; then
     mkdir -p "$OUTPUT_DIR"
 fi
+
+# TODO make model path not required 
 
 # Run inference - pass all extra arguments through
 pixi run -e gpu python sam_trainer/run_inference.py \
