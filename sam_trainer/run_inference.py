@@ -164,6 +164,7 @@ def process_tiff_images(
     min_instance_area: int,
     border_margin: int,
     max_instances: Optional[int],
+    min_file_size_kb: float = 0,
     use_amg: bool = False,
     generate_kwargs: dict = None,
 ) -> None:
@@ -180,6 +181,7 @@ def process_tiff_images(
         min_instance_area: Minimum area filter for postprocessing
         border_margin: Border margin filter for postprocessing
         max_instances: Maximum number of instances to keep
+        min_file_size_kb: Minimum file size in KB to process (0 = no filter)
         use_amg: Whether using AMG mode
         generate_kwargs: Optional decoder parameters
     """
@@ -206,6 +208,16 @@ def process_tiff_images(
 
         for image_path in image_files:
             progress.update(task, description=f"[cyan]Processing {image_path.name}...")
+
+            # Filter by file size
+            if min_file_size_kb > 0:
+                size_kb = image_path.stat().st_size / 1024
+                if size_kb < min_file_size_kb:
+                    logger.debug(
+                        f"Skipping {image_path.name}: too small ({size_kb:.1f} KB < {min_file_size_kb} KB)"
+                    )
+                    progress.advance(task)
+                    continue
 
             try:
                 # Load image
@@ -307,6 +319,11 @@ def main(
         0,
         "--min-instance-area",
         help="Drop instances smaller than this area (pixels). TIFF only.",
+    ),
+    min_file_size_kb: float = typer.Option(
+        0,
+        "--min-file-size",
+        help="Skip files smaller than this size in KB (0 = no filter). TIFF only.",
     ),
     border_margin: int = typer.Option(
         0,
@@ -480,6 +497,7 @@ def main(
                 min_instance_area=min_instance_area,
                 border_margin=border_margin,
                 max_instances=max_instances,
+                min_file_size_kb=min_file_size_kb,
                 use_amg=use_amg,
                 generate_kwargs=generate_kwargs,
             )
