@@ -338,8 +338,8 @@ def run_training(config: TrainingConfig, output_dir: Path) -> dict[str, Path]:
     logger.info(f"Train batches: {len(train_loader)}, Val batches: {len(val_loader)}")
 
     # Check and visualize first batches
-    check_and_visualize_batch(train_loader, output_dir, "train")
-    check_and_visualize_batch(val_loader, output_dir, "val")
+    # check_and_visualize_batch(train_loader, output_dir, "train")
+    # check_and_visualize_batch(val_loader, output_dir, "val")
 
     # Set up checkpoint directory
     # Note: micro-SAM's trainers will create checkpoints/<name>/ under save_root
