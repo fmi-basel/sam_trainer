@@ -25,6 +25,7 @@ scikit-image = ">=0.22"
 albumentations = ">=1.4.0"
 rich = ">=13.0"
 ngio = ">=0.4.4,<0.5"
+ipywidgets = ">=8.1.8,<9"
 
 [pypi-dependencies]
 sam_trainer = { path = ".", editable = true }
