@@ -1,4 +1,5 @@
 """
+Created only for the SWI project.
 Script to preprocess Zarr datasets for SAM training.
 Performs:
 1. Polarity Correction (using Ground Truth labels)
