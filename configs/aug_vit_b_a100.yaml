@@ -1,0 +1,37 @@
+experiment_name: "tsiairis_hydra_aug4_vit_b_lm"
+output_base_dir: "runs"
+augmentation:
+  input_images_dir: "/tachyon/groups/scratch/gmicro/khosnikl/projects/data/tsiairis/sam_training_data/images_fg_only"
+  input_labels_dir: "/tachyon/groups/scratch/gmicro/khosnikl/projects/data/tsiairis/sam_training_data/labels_fg_only"
+  output_dir: "/tachyon/groups/scratch/gmicro/khosnikl/projects/data/tsiairis/sam_training_data/augmented"
+  output_format: "original"
+  n_augmentations: 4
+  include_original: true
+  allow_rotate_90: false
+  treat_3d_as_2d: false
+training:
+  images_dir: "/tachyon/groups/scratch/gmicro/khosnikl/projects/data/tsiairis/sam_training_data/augmented/images"
+  labels_dir: "/tachyon/groups/scratch/gmicro/khosnikl/projects/data/tsiairis/sam_training_data/augmented/labels"
+  model_type: "vit_b_lm"
+  patch_shape: [1515, 1278]
+  batch_size: 6
+  n_epochs: 100
+  n_samples: null
+  num_workers: 12
+  learning_rate: 1.0e-5
+  early_stopping: 10
+  val_split: 0.1
+  shuffle_data: true
+  shuffle_seed: 42
+  train_instance_segmentation_only: false
+  normalize_inputs: true
+  normalize_lower_percentile: 1.0
+  normalize_upper_percentile: 99.5
+  use_min_instance_sampler: false
+  min_instances_per_patch: 1
+  min_instance_size: 1
+  save_validation_predictions_frequency: null
+  checkpoint_name: "tsiairis_hydra_checkpoint"
+  resume_from_checkpoint: null
+  export_path: "runs/tsiairis_hydra/tsiairis_hydra_aug4_model.pt"
+log_level: "INFO"

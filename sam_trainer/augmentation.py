@@ -58,16 +58,15 @@ def create_augmentation_pipeline(config: AugmentationConfig) -> Compose:
 
     # Geometric transforms (use INTER_NEAREST for masks to preserve labels)
     # Only use 90-degree rotations and flips to avoid padding/reflection artifacts
-    if config.flip_horizontal or config.flip_vertical:
-        transforms.append(
-            A.Compose(
-                [
-                    A.RandomRotate90(p=0.5),  # Only 90-degree rotations
-                    A.HorizontalFlip(p=0.5) if config.flip_horizontal else A.NoOp(),
-                    A.VerticalFlip(p=0.5) if config.flip_vertical else A.NoOp(),
-                ]
-            )
-        )
+    geo_transforms = []
+    if config.allow_rotate_90:
+        geo_transforms.append(A.RandomRotate90(p=0.5))
+    if config.flip_horizontal:
+        geo_transforms.append(A.HorizontalFlip(p=0.5))
+    if config.flip_vertical:
+        geo_transforms.append(A.VerticalFlip(p=0.5))
+    if geo_transforms:
+        transforms.append(A.Compose(geo_transforms))
 
     # Blur and noise
     if config.gaussian_blur_prob > 0:

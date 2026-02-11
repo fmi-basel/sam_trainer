@@ -72,6 +72,10 @@ def config(
             default="ome-zarr",
         )
         n_aug = typer.prompt("Number of augmentations per image", type=int, default=3)
+        allow_rotate_90 = typer.confirm(
+            "Allow 90-degree rotations? (may swap height/width for rectangular images)",
+            default=True,
+        )
 
         aug_config = AugmentationConfig(
             input_images_dir=aug_input_images,
@@ -79,6 +83,7 @@ def config(
             output_dir=aug_output,
             output_format=aug_format,
             n_augmentations=n_aug,
+            allow_rotate_90=allow_rotate_90,
         )
 
     # Training
@@ -86,16 +91,18 @@ def config(
 
     # Check data input mode
     use_zarr = typer.confirm("Use zarr containers for training data?", default=False)
-    
+
     train_images = None
     train_labels = None
     train_zarr_path = None
     val_zarr_path = None
     raw_key = None
     label_key = None
-    
+
     if use_zarr:
-        console.print("\n[dim]Zarr mode: Provide separate train and validation zarr containers[/dim]")
+        console.print(
+            "\n[dim]Zarr mode: Provide separate train and validation zarr containers[/dim]"
+        )
         train_zarr_path = Path(typer.prompt("Training zarr container path"))
         val_zarr_path = Path(typer.prompt("Validation zarr container path"))
         raw_key = typer.prompt("Raw image key in zarr", default="0")
@@ -303,6 +310,11 @@ def augment(
         "-f",
         help="Output format (original, ome-zarr, tif, hdf5)",
     ),
+    allow_rotate_90: bool = typer.Option(
+        True,
+        "--allow-rotate-90/--no-allow-rotate-90",
+        help="Allow random 90-degree rotations (may swap height/width)",
+    ),
     treat_3d_as_2d: bool = typer.Option(
         False,
         "--treat-3d-as-2d",
@@ -322,6 +334,7 @@ def augment(
         output_dir=output_dir,
         output_format=output_format,
         n_augmentations=n_augmentations,
+        allow_rotate_90=allow_rotate_90,
         treat_3d_as_2d=treat_3d_as_2d,
     )
 
