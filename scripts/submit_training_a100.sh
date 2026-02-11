@@ -55,7 +55,7 @@ export MKL_NUM_THREADS=${MKL_NUM_THREADS:-8}
 
 # Run training
 echo "[INFO] [$STARTDATE] [$$] Starting SAM training on A100..."
-pixi run -e gpu python -m sam_trainer.cli train --config "$CONFIG_PATH"
+pixi run -e gpu python -m sam_trainer.cli train --config "$CONFIG_PATH" -v
 
 # Move logs to output directory
 echo "[INFO] Moving logs to experiment directory..."
