@@ -71,7 +71,7 @@ def process_well(
     """
     # Get image data
     image_data = well_image_container.get_image()
-    logger.info(f"  Image shape: {image_data.shape}")
+    logger.debug(f"  Image shape: {image_data.shape}")
 
     # Create label container
     label = well_image_container.derive_label(label_name, overwrite=True)
@@ -123,7 +123,7 @@ def process_wells(
                 column=int(well_id[2:]),
                 image_path="0",
             )
-            logger.info(f"Processing well {well_id}")
+            logger.debug(f"Processing well {well_id}")
 
             process_well(
                 well_image_container=well_image_container,
