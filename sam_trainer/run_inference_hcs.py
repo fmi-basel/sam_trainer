@@ -91,7 +91,7 @@ def process_well(
         total_instances += n_instances
         logger.debug(f"    Image: {n_instances} instances")
 
-    logger.info(f"  Total instances: {total_instances}")
+    logger.debug(f"  Total instances in well: {total_instances}")
 
 
 def process_wells(
