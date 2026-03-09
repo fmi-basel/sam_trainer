@@ -19,9 +19,9 @@ logger = get_logger(__name__)
 
 
 def load_model_with_decoder(
-    model_path: str,
     model_type: str,
     device: str,
+    model_path: Optional[str] = None,
     use_amg: bool = False,
     **amg_kwargs,
 ) -> Tuple:
@@ -31,9 +31,10 @@ def load_model_with_decoder(
     both AMG and decoder-based (AIS) modes.
 
     Args:
-        model_path: Path to exported model checkpoint (.pt file)
         model_type: SAM model type (e.g., 'vit_b_lm', 'vit_l_lm')
         device: Device to load model on ('cuda' or 'cpu')
+        model_path: Path to a custom model checkpoint (.pt file). If None, the
+            pre-trained micro-SAM model for `model_type` is downloaded/used from cache.
         use_amg: If True, use AMG instead of decoder-based segmentation
         **amg_kwargs: Additional kwargs for AMG (pred_iou_thresh, stability_score_thresh, etc.)
 
@@ -48,7 +49,8 @@ def load_model_with_decoder(
     mode = "AMG" if use_amg else "AIS (decoder-based)"
     logger.info(f"Loading model with {mode} segmentation")
 
-    # Use get_predictor_and_segmenter which properly handles both modes
+    # Use get_predictor_and_segmenter which properly handles both modes.
+    # When checkpoint=None, micro-SAM downloads/uses the cached pre-trained model for model_type.
     predictor, segmenter = get_predictor_and_segmenter(
         model_type=model_type,
         checkpoint=model_path,

@@ -265,8 +265,11 @@ def process_tiff_images(
 
 @app.command()
 def main(
-    model: Path = typer.Option(
-        ..., "--model", "-m", help="Path to trained SAM model (.pt file)"
+    model: Optional[Path] = typer.Option(
+        None,
+        "--model",
+        "-m",
+        help="Path to a custom SAM model (.pt file). If omitted, the pre-trained micro-SAM model for --model-type is downloaded/used from cache.",
     ),
     input_path: Path = typer.Option(
         ...,
@@ -372,7 +375,7 @@ def main(
     setup_logging(verbose, console)
 
     # Validate inputs
-    if not model.exists():
+    if model is not None and not model.exists():
         console.print(f"[bold red]Error:[/bold red] Model file not found: {model}")
         raise typer.Exit(1)
     if not input_path.exists():
@@ -414,7 +417,12 @@ def main(
                 raise typer.Exit(1)
 
     # Load model
-    console.print(f"[cyan]Loading model:[/cyan] {model}")
+    if model is not None:
+        console.print(f"[cyan]Loading model:[/cyan] {model}")
+    else:
+        console.print(
+            f"[cyan]Loading model:[/cyan] pre-trained {model_type} (from cache)"
+        )
     segmentation_mode = "AMG" if use_amg else "AIS (decoder-based)"
     console.print(f"[cyan]Segmentation mode:[/cyan] {segmentation_mode}")
 
@@ -429,9 +437,9 @@ def main(
 
     try:
         predictor, segmenter = load_model_with_decoder(
-            model_path=str(model),
             model_type=model_type,
             device=device,
+            model_path=str(model) if model is not None else None,
             use_amg=use_amg,
         )
         console.print("[green]✓[/green] Model loaded successfully")
