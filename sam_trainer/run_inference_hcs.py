@@ -38,18 +38,6 @@ app = typer.Typer(
 console = Console()
 logger = get_logger(__name__)
 
-# Default model path on cluster
-DEFAULT_MODEL_PATH = (
-    "/tachyon/groups/scratch/gmicro/khosnikl/projects/sam_trainer/sam_trainer/"
-    "runs/full_img_vit_b_a100_lr-1e-5_full_run/checkpoints/"
-    "full_image_vit_b_a100_lr-1e-5_full_run/best.pt"
-)
-# DEFAULT_MODEL_PATH = (
-#     "W:/groups/scratch/gmicro/khosnikl/projects/sam_trainer/sam_trainer/"
-#     "runs/full_img_vit_b_a100_lr-1e-5_full_run/checkpoints/"
-#     "full_image_vit_b_a100_lr-1e-5_full_run/best.pt"
-# )
-
 
 def process_well(
     well_image_container,
@@ -178,10 +166,10 @@ def process_single_plate(
 
 def process_hcs_plates(
     input_path: Path,
-    model_path: Path,
     model_type: str,
     device: str,
     label_name: str,
+    model_path: Optional[Path] = None,
     use_amg: bool = False,
     generate_kwargs: dict = None,
 ) -> None:
@@ -189,22 +177,28 @@ def process_hcs_plates(
 
     Args:
         input_path: Path to a single .zarr plate or parent directory containing plates
-        model_path: Path to model checkpoint
         model_type: SAM model type
         device: Device to use
         label_name: Name for the label layer
+        model_path: Path to a custom model checkpoint (.pt file). If None, the
+            pre-trained micro-SAM model for `model_type` is downloaded/used from cache.
         use_amg: If True, use AMG instead of decoder-based segmentation
         generate_kwargs: Optional decoder parameters
     """
     # Load model once
-    console.print(f"[cyan]Loading model:[/cyan] {model_path}")
+    if model_path is not None:
+        console.print(f"[cyan]Loading model:[/cyan] {model_path}")
+    else:
+        console.print(
+            f"[cyan]Loading model:[/cyan] pre-trained {model_type} (from cache)"
+        )
     segmentation_mode = "AMG" if use_amg else "AIS (decoder-based)"
     console.print(f"[cyan]Segmentation mode:[/cyan] {segmentation_mode}")
     try:
         predictor, segmenter = load_model_with_decoder(
-            model_path=str(model_path),
             model_type=model_type,
             device=device,
+            model_path=str(model_path) if model_path is not None else None,
             use_amg=use_amg,
         )
         console.print("[green]✓[/green] Model loaded successfully")
@@ -248,11 +242,11 @@ def main(
         "-i",
         help="Path to HCS OME-Zarr plate (.zarr file) or parent directory containing plates",
     ),
-    model_path: Path = typer.Option(
-        DEFAULT_MODEL_PATH,
+    model_path: Optional[Path] = typer.Option(
+        None,
         "--model",
         "-m",
-        help="Path to trained SAM model (.pt file)",
+        help="Path to a custom SAM model (.pt file). If omitted, the pre-trained micro-SAM model for --model-type is downloaded/used from cache.",
     ),
     model_type: str = typer.Option(
         "vit_b_lm",
@@ -317,7 +311,7 @@ def main(
             f"[bold red]Error:[/bold red] Input plate not found: {input_plate}"
         )
         raise typer.Exit(1)
-    if model_path and not model_path.exists():
+    if model_path is not None and not model_path.exists():
         console.print(f"[bold red]Error:[/bold red] Model file not found: {model_path}")
         raise typer.Exit(1)
 
@@ -336,10 +330,10 @@ def main(
 
     process_hcs_plates(
         input_path=input_plate,
-        model_path=model_path,
         model_type=model_type,
         device=device,
         label_name=label_name,
+        model_path=model_path,
         use_amg=use_amg,
         generate_kwargs=generate_kwargs,
     )
