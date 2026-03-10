@@ -62,6 +62,27 @@ def load_model_with_decoder(
     return predictor, segmenter
 
 
+def _to_2d(image: np.ndarray) -> np.ndarray:
+    """Reduce an ND image to 2D by squeezing singletons and taking the first channel.
+
+    OME-Zarr images arriving from NGIO iterators can have extra leading dimensions
+    (e.g. C, Z) even after MIP. SAM only accepts 2D (H, W) or 3D (Z, H, W) input.
+    """
+    original_shape = image.shape
+    # Squeeze all size-1 dimensions first
+    image = np.squeeze(image)
+    if image.ndim > 2:
+        logger.debug(
+            f"Image shape {original_shape} → squeezed to {image.shape}, "
+            f"still {image.ndim}D — taking first channel along axis 0"
+        )
+        while image.ndim > 2:
+            image = image[0]
+    elif image.ndim != original_shape.__len__():
+        logger.debug(f"Image shape {original_shape} → squeezed to {image.shape}")
+    return image
+
+
 def segment_image(
     image: np.ndarray,
     predictor,
@@ -74,7 +95,7 @@ def segment_image(
     """Run instance segmentation on a single image.
 
     Args:
-        image: Input image as 2D numpy array
+        image: Input image as numpy array (any dimensionality; reduced to 2D internally)
         predictor: SAM predictor
         segmenter: SAM segmenter (AMG or InstanceSegmentationWithDecoder)
         use_amg: Whether using AMG mode (affects processing)
@@ -86,6 +107,7 @@ def segment_image(
         Instance segmentation masks as 2D numpy array with integer labels
     """
     generate_kwargs = generate_kwargs or {}
+    image = _to_2d(image)
 
     if isinstance(segmenter, InstanceSegmentationWithDecoder) and not use_amg:
         # Decoder-based segmentation: use initialize + generate pattern
