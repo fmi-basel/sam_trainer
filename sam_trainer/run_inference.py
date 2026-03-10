@@ -136,6 +136,11 @@ def process_zarr_image(
                 generate_kwargs=generate_kwargs,
             )
 
+            # Restore any leading dims that _to_2d squeezed away (e.g. C=1)
+            # so lbl_writer gets the same shape as the input patch
+            if masks.ndim < img_patch.ndim:
+                masks = masks.reshape(img_patch.shape[:-2] + masks.shape)
+
             # Write labels back to zarr
             lbl_writer(patch=masks.astype(np.uint32))
 

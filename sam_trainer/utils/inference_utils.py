@@ -62,6 +62,7 @@ def load_model_with_decoder(
     return predictor, segmenter
 
 
+# TODO add channel options for future multi-channel support
 def _to_2d(image: np.ndarray) -> np.ndarray:
     """Reduce an ND image to 2D by squeezing singletons and taking the first channel.
 

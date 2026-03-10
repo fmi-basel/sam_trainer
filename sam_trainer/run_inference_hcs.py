@@ -73,6 +73,11 @@ def process_well(
             img, predictor, segmenter, use_amg=use_amg, generate_kwargs=generate_kwargs
         )
 
+        # Restore any leading dims that _to_2d squeezed away (e.g. C=1)
+        # so lbl_writer gets the same shape as the input patch
+        if masks.ndim < img.ndim:
+            masks = masks.reshape(img.shape[:-2] + masks.shape)
+
         lbl_writer(patch=masks.astype(np.uint8))
 
         n_instances = len(np.unique(masks)) - 1
