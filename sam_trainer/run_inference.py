@@ -35,6 +35,7 @@ from rich.progress import Progress, SpinnerColumn, TextColumn
 from sam_trainer.utils.inference_utils import (
     load_model_with_decoder,
     postprocess_masks,
+    resolve_channel_index,
     segment_image,
 )
 from sam_trainer.utils.logging import get_logger, setup_logging
@@ -56,11 +57,12 @@ def is_zarr_path(path: Path) -> bool:
     return path.suffix == ".zarr" or (path.is_dir() and (path / ".zattrs").exists())
 
 
-def load_tiff_image(image_path: Path) -> np.ndarray:
+def load_tiff_image(image_path: Path, channel_index: int = 0) -> np.ndarray:
     """Load a TIFF image and return 2D array.
 
     Args:
         image_path: Path to TIFF file
+        channel_index: Channel to select from multi-channel images. Default: 0.
 
     Returns:
         2D numpy array (grayscale image)
@@ -74,16 +76,19 @@ def load_tiff_image(image_path: Path) -> np.ndarray:
         if img.shape[0] <= 4 and img.shape[0] < min(img.shape[1:]):
             # Likely channels-first (C, H, W)
             logger.debug(
-                f"  Shape: {img.shape} - treating as multi-channel, using first channel"
+                f"  Shape: {img.shape} - treating as multi-channel, "
+                f"using channel {channel_index}"
             )
-            return img[0]
+            return img[channel_index]
         else:
             # Likely Z-stack or channels-last
-            logger.debug(f"  Shape: {img.shape} - taking first slice/channel")
-            return img[0]
+            logger.debug(f"  Shape: {img.shape} - taking slice/channel {channel_index}")
+            return img[channel_index]
     else:
-        logger.warning(f"  Unexpected shape {img.shape}, taking first 2D slice")
-        return img[0]
+        logger.warning(
+            f"  Unexpected shape {img.shape}, taking channel {channel_index}"
+        )
+        return img[channel_index]
 
 
 def save_tiff_masks(masks: np.ndarray, output_path: Path) -> None:
@@ -99,6 +104,7 @@ def process_zarr_image(
     label_name: str = "sam_labels",
     use_amg: bool = False,
     generate_kwargs: dict = None,
+    channel: Optional[str] = None,
 ) -> None:
     """Process a single OME-Zarr image and write labels back to zarr.
 
@@ -109,6 +115,8 @@ def process_zarr_image(
         label_name: Name for the label layer (default: 'sam_labels')
         use_amg: If True, using AMG segmentation mode
         generate_kwargs: Optional decoder parameters
+        channel: Channel to segment. Integer index string (e.g. '0') or omero channel
+            name (e.g. 'BF'). Default: first channel.
     """
     console.print(f"[cyan]Processing OME-Zarr:[/cyan] {zarr_path.name}")
 
@@ -118,6 +126,15 @@ def process_zarr_image(
         image_data = image_container.get_image()
 
         logger.info(f"  Image shape: {image_data.shape}")
+
+        # Resolve channel index once per image
+        channel_labels = getattr(image_data, "channel_labels", []) or []
+        wavelength_ids = getattr(image_data, "wavelength_ids", []) or []
+        channel_index = resolve_channel_index(
+            channel_labels, channel, wavelength_ids=wavelength_ids
+        )
+        if channel is not None:
+            logger.debug(f"  Using channel index {channel_index} (spec: '{channel}')")
 
         # Create label container
         label = image_container.derive_label(label_name, overwrite=True)
@@ -134,6 +151,7 @@ def process_zarr_image(
                 segmenter,
                 use_amg=use_amg,
                 generate_kwargs=generate_kwargs,
+                channel_index=channel_index,
             )
 
             # lbl_writer expects (1, H, W) — add the channel dim SAM dropped
@@ -167,6 +185,7 @@ def process_tiff_images(
     min_file_size_kb: float = 0,
     use_amg: bool = False,
     generate_kwargs: dict = None,
+    channel: Optional[str] = None,
 ) -> None:
     """Process TIFF images and save masks as separate TIFF files.
 
@@ -184,7 +203,21 @@ def process_tiff_images(
         min_file_size_kb: Minimum file size in KB to process (0 = no filter)
         use_amg: Whether using AMG mode
         generate_kwargs: Optional decoder parameters
+        channel: Channel to use. Integer index string (e.g. '0'). Default: first channel.
+            TIFF files have no channel metadata, so only numeric indices are supported.
     """
+    # Resolve TIFF channel index (numeric only)
+    tiff_channel_index = 0
+    if channel is not None:
+        try:
+            tiff_channel_index = int(channel)
+        except ValueError:
+            console.print(
+                f"[bold red]Error:[/bold red] TIFF images have no channel metadata. "
+                f"Provide a numeric channel index, not '{channel}'."
+            )
+            raise typer.Exit(1)
+
     # Get list of images
     image_files = sorted(input_dir.glob(pattern))
     if not image_files:
@@ -221,7 +254,7 @@ def process_tiff_images(
 
             try:
                 # Load image
-                image = load_tiff_image(image_path)
+                image = load_tiff_image(image_path, channel_index=tiff_channel_index)
                 logger.debug(f"Loaded {image_path.name} with shape {image.shape}")
 
                 # Run inference
@@ -356,6 +389,15 @@ def main(
     verbose: int = typer.Option(
         0, "--verbose", "-v", count=True, help="Increase logging verbosity"
     ),
+    channel: Optional[str] = typer.Option(
+        None,
+        "--channel",
+        "-c",
+        help=(
+            "Channel to segment. Integer index (e.g. '0', '1') or, for OME-Zarr, "
+            "an omero channel name (e.g. 'BF', 'DAPI'). Default: first channel."
+        ),
+    ),
 ) -> None:
     """Run SAM instance segmentation inference on TIFF or OME-Zarr images.
 
@@ -453,7 +495,13 @@ def main(
         # Single OME-Zarr image
         console.print("[cyan]Input type:[/cyan] OME-Zarr image")
         process_zarr_image(
-            input_path, predictor, segmenter, label_name, use_amg, generate_kwargs
+            input_path,
+            predictor,
+            segmenter,
+            label_name,
+            use_amg,
+            generate_kwargs,
+            channel=channel,
         )
         console.print("\n[bold green]✓ Inference complete![/bold green]")
 
@@ -474,6 +522,7 @@ def main(
                     label_name,
                     use_amg,
                     generate_kwargs,
+                    channel=channel,
                 )
             console.print("\n[bold green]✓ All inference complete![/bold green]")
 
@@ -508,6 +557,7 @@ def main(
                 min_file_size_kb=min_file_size_kb,
                 use_amg=use_amg,
                 generate_kwargs=generate_kwargs,
+                channel=channel,
             )
             console.print("\n[bold green]✓ Inference complete![/bold green]")
             console.print(f"Results saved to: {output_dir}")

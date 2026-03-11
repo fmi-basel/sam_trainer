@@ -62,24 +62,104 @@ def load_model_with_decoder(
     return predictor, segmenter
 
 
-# TODO add channel options for future multi-channel support
-def _to_2d(image: np.ndarray) -> np.ndarray:
-    """Reduce an ND image to 2D by squeezing singletons and taking the first channel.
+def resolve_channel_index(
+    channel_labels: list,
+    channel: Optional[str],
+    wavelength_ids: Optional[list] = None,
+) -> int:
+    """Resolve a channel specification to a 0-based integer index.
+
+    Lookup order for string names:
+    1. ``channel_labels`` (omero channel names, e.g. 'BF', 'DAPI')
+    2. ``wavelength_ids`` (e.g. 'A02_C01')
+
+    Args:
+        channel_labels: List of channel label strings from image metadata (e.g., from NGIO).
+            Can be empty or None if metadata is unavailable.
+        channel: Channel specification. One of:
+            - None: use the first channel (index 0, default behaviour)
+            - An integer string like "0" or "2": use that channel index
+            - A channel name like "BF" or "DAPI": look up in channel_labels
+            - A wavelength ID like "A02_C01": look up in wavelength_ids
+        wavelength_ids: Optional list of wavelength ID strings from image metadata
+            (e.g., from NGIO ``image_data.wavelength_ids``). Can be empty or None.
+
+    Returns:
+        0-based channel index.
+
+    Raises:
+        ValueError: If the channel name is not found or the index is out of range.
+    """
+    if channel is None:
+        return 0
+
+    # Try integer index first
+    try:
+        idx = int(channel)
+        n = (
+            len(channel_labels)
+            if channel_labels
+            else (len(wavelength_ids) if wavelength_ids else 0)
+        )
+        if n and idx >= n:
+            raise ValueError(f"Channel index {idx} out of range for {n} channels")
+        return idx
+    except ValueError as int_err:
+        if "out of range" in str(int_err):
+            raise
+
+    # Look up by name: try channel_labels first, then wavelength_ids
+    if channel_labels and channel in channel_labels:
+        return channel_labels.index(channel)
+
+    if wavelength_ids and channel in wavelength_ids:
+        return wavelength_ids.index(channel)
+
+    # Not found — build a helpful error message
+    available: list[str] = []
+    if channel_labels:
+        available += [f"channel_labels: {channel_labels}"]
+    if wavelength_ids:
+        available += [f"wavelength_ids: {wavelength_ids}"]
+    if not available:
+        raise ValueError(
+            f"Cannot resolve channel name '{channel}': no channel metadata available. "
+            "Use a numeric index instead."
+        )
+    raise ValueError(
+        f"Channel '{channel}' not found. Available — " + "; ".join(available)
+    )
+
+
+def _to_2d(image: np.ndarray, channel_index: int = 0) -> np.ndarray:
+    """Reduce an ND image to 2D by squeezing singletons and selecting a channel.
 
     OME-Zarr images arriving from NGIO iterators can have extra leading dimensions
     (e.g. C, Z) even after MIP. SAM only accepts 2D (H, W) or 3D (Z, H, W) input.
+
+    Args:
+        image: Input image array of any dimensionality.
+        channel_index: Index of the channel to select when the image has multiple
+            channels after squeezing. Default: 0 (first channel).
     """
     original_shape = image.shape
     # Squeeze all size-1 dimensions first
     image = np.squeeze(image)
     if image.ndim > 2:
+        if channel_index >= image.shape[0]:
+            raise ValueError(
+                f"Channel index {channel_index} out of range for shape {image.shape} "
+                f"(original: {original_shape})"
+            )
         logger.debug(
             f"Image shape {original_shape} → squeezed to {image.shape}, "
-            f"still {image.ndim}D — taking first channel along axis 0"
+            f"selecting channel {channel_index} along axis 0"
         )
+        image = image[channel_index]
+        # Handle remaining extra dims (e.g., Z axis after channel selection)
         while image.ndim > 2:
             image = image[0]
-    elif image.ndim != original_shape.__len__():
+    elif image.ndim != len(original_shape):
         logger.debug(f"Image shape {original_shape} → squeezed to {image.shape}")
     return image
 
@@ -92,6 +172,7 @@ def segment_image(
     tile_shape: Optional[Tuple[int, int]] = None,
     halo: Optional[Tuple[int, int]] = None,
     generate_kwargs: Optional[Dict[str, Any]] = None,
+    channel_index: int = 0,
 ) -> np.ndarray:
     """Run instance segmentation on a single image.
 
@@ -103,12 +184,14 @@ def segment_image(
         tile_shape: Optional tile shape for large images (e.g., (512, 512))
         halo: Optional overlap for stitching tiles (e.g., (64, 64))
         generate_kwargs: Optional parameters for generate() method (decoder thresholds)
+        channel_index: Index of the channel to select from multi-channel patches.
+            Default: 0 (first channel).
 
     Returns:
         Instance segmentation masks as 2D numpy array with integer labels
     """
     generate_kwargs = generate_kwargs or {}
-    image = _to_2d(image)
+    image = _to_2d(image, channel_index=channel_index)
 
     if isinstance(segmenter, InstanceSegmentationWithDecoder) and not use_amg:
         # Decoder-based segmentation: use initialize + generate pattern

@@ -24,6 +24,7 @@ from rich.console import Console
 
 from sam_trainer.utils.inference_utils import (
     load_model_with_decoder,
+    resolve_channel_index,
     segment_image,
 )
 from sam_trainer.utils.logging import get_logger, setup_logging
@@ -46,6 +47,7 @@ def process_well(
     label_name: str,
     use_amg: bool = False,
     generate_kwargs: dict = None,
+    channel: Optional[str] = None,
 ) -> None:
     """Process a single well in an HCS plate.
 
@@ -56,12 +58,23 @@ def process_well(
         label_name: Name for the label layer
         use_amg: Whether using AMG mode
         generate_kwargs: Optional decoder parameters
+        channel: Channel to use. Integer index string (e.g. '0') or omero channel
+            name (e.g. 'BF'). Default: first channel.
     """
     # Get image data
     image_data = well_image_container.get_image()
     logger.debug(f"  Image shape: {image_data.shape}")
 
-    # Create label container
+    # Resolve channel index once per well
+    channel_labels = getattr(image_data, "channel_labels", []) or []
+    wavelength_ids = getattr(image_data, "wavelength_ids", []) or []
+    channel_index = resolve_channel_index(
+        channel_labels, channel, wavelength_ids=wavelength_ids
+    )
+    if channel is not None:
+        logger.debug(f"  Using channel index {channel_index} (spec: '{channel}')")
+
+    # Create label container - overwrites existing labels with same name as "label_name"
     label = well_image_container.derive_label(label_name, overwrite=True)
 
     # Use SegmentationIterator for efficient processing
@@ -70,7 +83,12 @@ def process_well(
     total_instances = 0
     for img, lbl_writer in seg.iter_as_numpy():
         masks = segment_image(
-            img, predictor, segmenter, use_amg=use_amg, generate_kwargs=generate_kwargs
+            img,
+            predictor,
+            segmenter,
+            use_amg=use_amg,
+            generate_kwargs=generate_kwargs,
+            channel_index=channel_index,
         )
 
         # lbl_writer expects (1, H, W) — add the channel dim SAM dropped
@@ -90,6 +108,7 @@ def process_wells(
     label_name: str,
     use_amg: bool = False,
     generate_kwargs: dict = None,
+    channel: Optional[str] = None,
 ) -> None:
     """Process all wells in an HCS plate.
 
@@ -100,6 +119,7 @@ def process_wells(
         label_name: Name for the label layer
         use_amg: Whether using AMG mode
         generate_kwargs: Optional decoder parameters
+        channel: Channel to use. Integer index string or omero channel name. Default: first.
     """
     wells = list(plate.get_wells().keys())
     console.print(f"[cyan]Found {len(wells)} wells to process[/cyan]")
@@ -121,6 +141,7 @@ def process_wells(
                 label_name=label_name,
                 use_amg=use_amg,
                 generate_kwargs=generate_kwargs,
+                channel=channel,
             )
 
         except Exception as e:
@@ -136,6 +157,7 @@ def process_single_plate(
     label_name: str,
     use_amg: bool = False,
     generate_kwargs: dict = None,
+    channel: Optional[str] = None,
 ) -> None:
     """Process a single HCS plate.
 
@@ -146,6 +168,7 @@ def process_single_plate(
         label_name: Name for the label layer
         use_amg: Whether using AMG mode
         generate_kwargs: Optional decoder parameters
+        channel: Channel to use. Integer index string or omero channel name. Default: first.
     """
     console.print(f"\n[cyan]Opening plate:[/cyan] {plate_path}")
 
@@ -158,7 +181,15 @@ def process_single_plate(
         return
 
     try:
-        process_wells(plate, predictor, segmenter, label_name, use_amg, generate_kwargs)
+        process_wells(
+            plate,
+            predictor,
+            segmenter,
+            label_name,
+            use_amg,
+            generate_kwargs,
+            channel=channel,
+        )
         console.print(f"[green]✓[/green] Plate complete: {plate_path}")
     except Exception as e:
         console.print(f"[bold red]Error processing plate:[/bold red] {e}")
@@ -173,6 +204,7 @@ def process_hcs_plates(
     model_path: Optional[Path] = None,
     use_amg: bool = False,
     generate_kwargs: dict = None,
+    channel: Optional[str] = None,
 ) -> None:
     """Process either a single plate or all plates in a directory.
 
@@ -185,6 +217,7 @@ def process_hcs_plates(
             pre-trained micro-SAM model for `model_type` is downloaded/used from cache.
         use_amg: If True, use AMG instead of decoder-based segmentation
         generate_kwargs: Optional decoder parameters
+        channel: Channel to use. Integer index string or omero channel name. Default: first.
     """
     # Load model once
     if model_path is not None:
@@ -213,7 +246,13 @@ def process_hcs_plates(
         # Single plate
         console.print("[cyan]Mode:[/cyan] Single plate processing")
         process_single_plate(
-            input_path, predictor, segmenter, label_name, use_amg, generate_kwargs
+            input_path,
+            predictor,
+            segmenter,
+            label_name,
+            use_amg,
+            generate_kwargs,
+            channel=channel,
         )
     else:
         # Parent directory - find all .zarr plates
@@ -231,7 +270,13 @@ def process_hcs_plates(
         for i, plate_path in enumerate(zarr_plates, 1):
             console.print(f"\n[cyan]Processing plate {i}/{len(zarr_plates)}[/cyan]")
             process_single_plate(
-                plate_path, predictor, segmenter, label_name, use_amg, generate_kwargs
+                plate_path,
+                predictor,
+                segmenter,
+                label_name,
+                use_amg,
+                generate_kwargs,
+                channel=channel,
             )
 
 
@@ -286,6 +331,15 @@ def main(
         "--foreground-thresh",
         help="Foreground threshold for decoder mode (default: 0.5)",
     ),
+    channel: Optional[str] = typer.Option(
+        None,
+        "--channel",
+        "-c",
+        help=(
+            "Channel to segment. Integer index (e.g. '0', '1') or omero channel name "
+            "(e.g. 'BF', 'DAPI'). Default: first channel."
+        ),
+    ),
     verbose: int = typer.Option(
         0, "--verbose", "-v", count=True, help="Increase logging verbosity"
     ),
@@ -329,6 +383,9 @@ def main(
     }
     console.print(f"[cyan]Decoder thresholds:[/cyan] {generate_kwargs}")
 
+    if channel is not None:
+        console.print(f"[cyan]Channel:[/cyan] {channel}")
+
     process_hcs_plates(
         input_path=input_plate,
         model_type=model_type,
@@ -337,6 +394,7 @@ def main(
         model_path=model_path,
         use_amg=use_amg,
         generate_kwargs=generate_kwargs,
+        channel=channel,
     )
 
     console.print("\n[bold green]✓ All inference complete![/bold green]")
