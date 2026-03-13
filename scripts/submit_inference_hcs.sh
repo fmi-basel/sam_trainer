@@ -21,6 +21,12 @@
 # 3. With additional flags (e.g., AMG mode, custom thresholds):
 #    sbatch scripts/submit_inference_hcs.sh plate.zarr sam_labels --use-amg
 #    sbatch scripts/submit_inference_hcs.sh folder/ ais_relaxed --center-dist-thresh 0.6
+#
+# 4. Selecting a specific channel (by label name, wavelength ID, or index):
+#    sbatch scripts/submit_inference_hcs.sh plate.zarr microsam-BF --channel BF
+#    sbatch scripts/submit_inference_hcs.sh plate.zarr microsam-CellMask --channel CellMask
+#    sbatch scripts/submit_inference_hcs.sh plate.zarr microsam-ch2 --channel A02_C04
+#    sbatch scripts/submit_inference_hcs.sh plate.zarr microsam-ch2 --channel 2
 
 INPUT_PATH="$1"
 LABEL_NAME="$2"

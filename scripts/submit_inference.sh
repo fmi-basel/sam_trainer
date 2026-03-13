@@ -17,6 +17,11 @@
 #   TIFF: sbatch scripts/submit_inference.sh <model_path> <input_dir> <output_dir> [extra_args]
 #   Zarr: sbatch scripts/submit_inference.sh <model_path> <input.zarr> "" [extra_args]
 #         (output_dir not used for zarr - labels written back to zarr)
+#
+# Selecting a specific channel (OME-Zarr: by label name, wavelength ID, or index; TIFF: index only):
+#   sbatch scripts/submit_inference.sh model.pt images/ masks/ --channel BF
+#   sbatch scripts/submit_inference.sh model.pt images/ masks/ --channel A02_C04
+#   sbatch scripts/submit_inference.sh model.pt images/ masks/ --channel 2
 
 set -eu
 
