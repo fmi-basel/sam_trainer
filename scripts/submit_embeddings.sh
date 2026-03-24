@@ -78,7 +78,7 @@ echo "[INFO] [$STARTDATE] [$$] Config: $CONFIG_PATH"
 export OMP_NUM_THREADS=${OMP_NUM_THREADS:-8}
 export MKL_NUM_THREADS=${MKL_NUM_THREADS:-8}
 
-echo "[INFO] [$STARTDATE] [$$] Using pixi environment: $ENV_NAME"
+echo "[INFO] [$STARTDATE] [$$] Using pixi environment: gpu"
 pixi run -e gpu python -m sam_trainer.cli embeddings --config "$CONFIG_PATH" -v "${EXTRA_ARGS[@]}"
 
 END=$(date +%s)
