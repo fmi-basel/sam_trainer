@@ -8,7 +8,7 @@ field_path: "0"
 label_level: 0
 
 model_type: vit_b_lm
-model_path: null
+model_path: final_models/organoids_turco.pt
 device: auto
 channel: null
 
