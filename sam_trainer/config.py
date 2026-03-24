@@ -1,6 +1,7 @@
 """Configuration schemas for SAM training pipeline using Pydantic."""
 
 from pathlib import Path
+import re
 from typing import Literal, Optional
 
 from pydantic import BaseModel, Field, field_validator
@@ -347,6 +348,14 @@ class EmbeddingsExtractionConfig(BaseModel):
         ge=0,
         description="Optional limit for number of organoids per well (debug)",
     )
+    include_plate_regex: Optional[str] = Field(
+        default=None,
+        description="Optional regex to include only matching plate directory names",
+    )
+    exclude_plate_regex: Optional[str] = Field(
+        default=None,
+        description="Optional regex to exclude matching plate directory names",
+    )
 
     @field_validator("run_name")
     @classmethod
@@ -381,6 +390,17 @@ class EmbeddingsExtractionConfig(BaseModel):
     def validate_pooling_modes(cls, v: list[str]) -> list[str]:
         if not v:
             raise ValueError("pooling_modes must contain at least one mode")
+        return v
+
+    @field_validator("include_plate_regex", "exclude_plate_regex")
+    @classmethod
+    def validate_optional_regex(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
+        try:
+            re.compile(v)
+        except re.error as exc:
+            raise ValueError(f"Invalid regex '{v}': {exc}") from exc
         return v
 
     @property

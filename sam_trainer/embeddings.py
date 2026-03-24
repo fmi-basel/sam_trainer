@@ -23,7 +23,11 @@ import zarr
 from ngio import open_ome_zarr_plate
 
 from sam_trainer.config import EmbeddingsExtractionConfig
-from sam_trainer.utils.inference_utils import _to_2d, load_model_with_decoder, resolve_channel_index
+from sam_trainer.utils.inference_utils import (
+    _to_2d,
+    load_model_with_decoder,
+    resolve_channel_index,
+)
 from sam_trainer.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -57,7 +61,12 @@ def run_embeddings_extraction(
     summary_path = run_dir / "extraction_summary.json"
     skipped_path = run_dir / "skipped_or_failed.csv"
 
-    plate_paths = _discover_plate_paths(config.input_path, config.max_plates)
+    plate_paths = _discover_plate_paths(
+        input_path=config.input_path,
+        max_plates=config.max_plates,
+        include_plate_regex=config.include_plate_regex,
+        exclude_plate_regex=config.exclude_plate_regex,
+    )
     logger.info("Discovered %d plate(s)", len(plate_paths))
 
     predictor, segmenter = load_model_with_decoder(
@@ -288,11 +297,25 @@ def _resolve_device(device: str) -> str:
     return device
 
 
-def _discover_plate_paths(input_path: Path, max_plates: int | None) -> list[Path]:
+def _discover_plate_paths(
+    input_path: Path,
+    max_plates: int | None,
+    include_plate_regex: str | None,
+    exclude_plate_regex: str | None,
+) -> list[Path]:
     if input_path.name.endswith(".zarr"):
         plate_paths = [input_path]
     else:
         plate_paths = sorted(p for p in input_path.glob("*.zarr") if p.is_dir())
+
+    if include_plate_regex is not None:
+        include_pattern = re.compile(include_plate_regex)
+        plate_paths = [p for p in plate_paths if include_pattern.search(p.name)]
+
+    if exclude_plate_regex is not None:
+        exclude_pattern = re.compile(exclude_plate_regex)
+        plate_paths = [p for p in plate_paths if not exclude_pattern.search(p.name)]
+
     if not plate_paths:
         raise FileNotFoundError(f"No .zarr plates found in {input_path}")
     if max_plates is not None:
@@ -364,6 +387,16 @@ def _pool_for_label(
     mask_tensor = torch.from_numpy(label_mask)[None, None]
     mask_small = F.interpolate(mask_tensor, size=(feat_h, feat_w), mode="nearest")[0, 0]
     mask_small_np = mask_small.numpy().astype(bool)
+
+    # Tiny labels can disappear when projected to the lower-resolution encoder grid.
+    # Fall back to coordinate projection so each original label pixel votes for a feature cell.
+    if not mask_small_np.any():
+        ys, xs = np.nonzero(label_mask)
+        if ys.size > 0:
+            in_h, in_w = labels.shape
+            y_idx = np.clip((ys * feat_h) // max(in_h, 1), 0, feat_h - 1)
+            x_idx = np.clip((xs * feat_w) // max(in_w, 1), 0, feat_w - 1)
+            mask_small_np[y_idx, x_idx] = True
 
     if not mask_small_np.any():
         return None
