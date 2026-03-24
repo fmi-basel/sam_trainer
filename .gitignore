@@ -94,3 +94,4 @@ logs/
 results/
 **/*.out
 **/*.err
+models/

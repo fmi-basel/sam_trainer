@@ -287,3 +287,105 @@ class PipelineConfig(BaseModel):
 
     class Config:
         extra = "forbid"
+
+
+class EmbeddingsExtractionConfig(BaseModel):
+    """Configuration for HCS OME-Zarr embeddings extraction."""
+
+    run_name: str = Field(..., description="Unique run name for output folder")
+    output_base_dir: Path = Field(
+        default=Path("runs/embeddings_baseline"),
+        description="Base directory for embedding run outputs",
+    )
+
+    input_path: Path = Field(
+        ..., description="Path to one .zarr plate or directory containing .zarr plates"
+    )
+    label_name: str = Field(
+        default="ais_default_041225",
+        description="Label layer name in labels/<label_name>/<label_level>",
+    )
+    field_path: str = Field(
+        default="0", description="HCS image path/field identifier within a well"
+    )
+    label_level: int = Field(default=0, ge=0, description="Label pyramid level")
+
+    model_type: Literal[
+        "vit_t", "vit_b", "vit_l", "vit_h", "vit_t_lm", "vit_b_lm", "vit_l_lm"
+    ] = Field(default="vit_b_lm", description="SAM model type for encoder extraction")
+    model_path: Optional[Path] = Field(
+        default=None,
+        description="Optional exported model checkpoint (.pt). If omitted, uses pretrained model_type.",
+    )
+    device: Literal["auto", "cpu", "cuda"] = Field(
+        default="auto", description="Device for extraction"
+    )
+    channel: Optional[str] = Field(
+        default=None,
+        description="Optional channel spec (index string, channel label, or wavelength ID)",
+    )
+
+    pooling_modes: list[Literal["mean", "mean_std_max"]] = Field(
+        default_factory=lambda: ["mean", "mean_std_max"],
+        description="Pooling feature families to export",
+    )
+
+    seed: int = Field(default=42, description="Random seed for deterministic behavior")
+
+    max_plates: Optional[int] = Field(
+        default=None,
+        ge=0,
+        description="Optional limit for number of plates to process (debug)",
+    )
+    max_wells: Optional[int] = Field(
+        default=None,
+        ge=0,
+        description="Optional limit for number of wells per plate (debug)",
+    )
+    max_organoids: Optional[int] = Field(
+        default=None,
+        ge=0,
+        description="Optional limit for number of organoids per well (debug)",
+    )
+
+    @field_validator("run_name")
+    @classmethod
+    def validate_run_name(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("run_name must not be empty")
+        return v.strip()
+
+    @field_validator("input_path")
+    @classmethod
+    def validate_input_path_exists(cls, v: Path) -> Path:
+        if not v.exists():
+            raise ValueError(f"Input path does not exist: {v}")
+        return v
+
+    @field_validator("label_name")
+    @classmethod
+    def validate_label_name(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("label_name must not be empty")
+        return v.strip()
+
+    @field_validator("model_path")
+    @classmethod
+    def validate_model_path(cls, v: Optional[Path]) -> Optional[Path]:
+        if v is not None and not v.exists():
+            raise ValueError(f"Model file does not exist: {v}")
+        return v
+
+    @field_validator("pooling_modes")
+    @classmethod
+    def validate_pooling_modes(cls, v: list[str]) -> list[str]:
+        if not v:
+            raise ValueError("pooling_modes must contain at least one mode")
+        return v
+
+    @property
+    def run_dir(self) -> Path:
+        return self.output_base_dir / self.run_name
+
+    class Config:
+        extra = "forbid"

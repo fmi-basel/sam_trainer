@@ -9,6 +9,16 @@ This package provides tools for:
 __version__ = "0.1.0"
 __author__ = "Niklas Khoss"
 
-from sam_trainer.config import AugmentationConfig, PipelineConfig, TrainingConfig
+from sam_trainer.config import (
+	AugmentationConfig,
+	EmbeddingsExtractionConfig,
+	PipelineConfig,
+	TrainingConfig,
+)
 
-__all__ = ["AugmentationConfig", "TrainingConfig", "PipelineConfig"]
+__all__ = [
+	"AugmentationConfig",
+	"TrainingConfig",
+	"PipelineConfig",
+	"EmbeddingsExtractionConfig",
+]

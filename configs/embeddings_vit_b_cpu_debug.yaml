@@ -1,0 +1,24 @@
+run_name: embeddings_cpu_debug
+output_base_dir: runs/embeddings_baseline
+
+input_path: dat/test_zarr/hcs/exp164-diff8.zarr
+# Local sample data currently ships labels under sam_labels.
+label_name: sam_labels
+field_path: "0"
+label_level: 0
+
+model_type: vit_b_lm
+model_path: models/organoids_turco_vit_b_lm.pt
+device: cpu
+channel: null
+
+pooling_modes:
+  - mean
+  - mean_std_max
+
+seed: 42
+
+# Local smoke limits
+max_plates: 1
+max_wells: 2
+max_organoids: null

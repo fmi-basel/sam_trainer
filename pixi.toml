@@ -9,6 +9,7 @@ version = "0.1.0"
 train = "python -m sam_trainer.cli train"
 augment = "python -m sam_trainer.cli augment"
 config = "python -m sam_trainer.cli config"
+embeddings = "python -m sam_trainer.cli embeddings"
 
 [dependencies]
 python = ">=3.10"

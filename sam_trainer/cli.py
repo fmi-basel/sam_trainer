@@ -11,7 +11,13 @@ from rich.console import Console
 from rich.logging import RichHandler
 
 from sam_trainer.augmentation import run_augmentation
-from sam_trainer.config import AugmentationConfig, PipelineConfig, TrainingConfig
+from sam_trainer.config import (
+    AugmentationConfig,
+    EmbeddingsExtractionConfig,
+    PipelineConfig,
+    TrainingConfig,
+)
+from sam_trainer.embeddings import run_embeddings_extraction
 from sam_trainer.training import run_training
 
 app = typer.Typer(
@@ -348,6 +354,62 @@ def augment(
     except Exception as e:
         console.print(f"[bold red]Error:[/bold red] {e}")
         raise typer.Exit(1)
+
+
+@app.command()
+def embeddings(
+    config_path: Path = typer.Option(
+        ..., "--config", "-c", help="Path to embeddings extraction YAML config"
+    ),
+    verbose: int = typer.Option(
+        0,
+        "--verbose",
+        "-v",
+        count=True,
+        help="Increase logging verbosity (-v, -vv, -vvv)",
+    ),
+) -> None:
+    """Extract per-organoid microSAM encoder embeddings from HCS OME-Zarr plates."""
+    setup_logging(verbose)
+
+    if not config_path.exists():
+        console.print(
+            f"[bold red]Error:[/bold red] Config file not found: {config_path}"
+        )
+        raise typer.Exit(1)
+
+    with open(config_path) as f:
+        config_dict = yaml.safe_load(f)
+
+    try:
+        config = EmbeddingsExtractionConfig(**config_dict)
+    except Exception as e:
+        console.print(f"[bold red]Error:[/bold red] Invalid embeddings config: {e}")
+        raise typer.Exit(1)
+
+    run_dir = config.run_dir
+    run_dir.mkdir(parents=True, exist_ok=True)
+
+    config_copy = run_dir / "frozen_config.yaml"
+    with open(config_copy, "w") as f:
+        yaml.dump(config_dict, f, default_flow_style=False, sort_keys=False)
+
+    console.print(f"\n[bold cyan]Embedding run:[/bold cyan] {config.run_name}")
+    console.print(f"[bold cyan]Output dir:[/bold cyan] {run_dir}\n")
+
+    try:
+        results = run_embeddings_extraction(config)
+    except Exception as e:
+        console.print(f"[bold red]Error during embedding extraction:[/bold red] {e}")
+        raise typer.Exit(1)
+
+    console.print("\n[bold green]✓ Embedding extraction complete![/bold green]")
+    console.print(f"Manifest: {results['manifest']}")
+    if results["mean_embeddings"] is not None:
+        console.print(f"Mean embeddings: {results['mean_embeddings']}")
+    if results["mean_std_max_embeddings"] is not None:
+        console.print(f"Mean+Std+Max embeddings: {results['mean_std_max_embeddings']}")
+    console.print(f"Summary: {results['summary']}")
 
 
 def main() -> None:

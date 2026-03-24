@@ -283,6 +283,46 @@ bash test_inference_tiff_commands.sh
 
 Results will be saved as separate label layers for side-by-side comparison in napari.
 
+## Organoid Embeddings Export (HCS)
+
+This repository can export per-organoid microSAM encoder embeddings from HCS OME-Zarr plates.
+The output is designed for downstream classification in a separate repository.
+
+### What This Step Produces
+
+- One row per organoid instance label with identity columns: `plate`, `well`, `label_id`.
+- Two feature tables in one run: mean pooling (`emb_m_*`) and mean + std + max pooling (`emb_m_*`, `emb_s_*`, `emb_x_*`).
+- Reproducibility artifacts (manifest, schema, run summary, skipped rows)
+
+### Local CPU Smoke Test
+
+```bash
+pixi run embeddings --config configs/embeddings_vit_b_cpu_debug.yaml -v
+```
+
+### Cluster Submission
+
+```bash
+sbatch scripts/submit_embeddings.sh --config configs/embeddings_vit_b_a100.yaml
+```
+
+Artifacts are written to:
+
+```text
+runs/embeddings_baseline/<run_name>/
+```
+
+### Scope Boundary
+
+This repository stops at embeddings export.
+Downstream modeling repository responsibilities:
+
+1. Join exported embeddings with biological labels.
+2. Build leakage-safe splits and train classifiers.
+3. Evaluate and publish model metrics.
+
+Recommended downstream join key: `plate + well + label_id` (or `composite_id`).
+
 ## Configuration Reference
 
 ### Augmentation Config

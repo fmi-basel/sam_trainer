@@ -1,0 +1,24 @@
+run_name: embeddings_vit_b_a100
+output_base_dir: runs/embeddings_baseline
+
+# Either point to a single plate .zarr or a directory containing *.zarr plates
+input_path: /tachyon/groups/scratch/gmicro_ipa/gturco/magielis/organoid_zarrs
+label_name: ais_default_041225
+field_path: "0"
+label_level: 0
+
+model_type: vit_b_lm
+model_path: null
+device: auto
+channel: null
+
+pooling_modes:
+  - mean
+  - mean_std_max
+
+seed: 42
+
+# Full run (no limits)
+max_plates: null
+max_wells: null
+max_organoids: null
