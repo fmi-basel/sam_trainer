@@ -8,7 +8,7 @@ field_path: "0"
 label_level: 0
 
 model_type: vit_b_lm
-model_path: null
+model_path: final_models/organoids_gturco.pt
 device: auto
 channel: null
 
@@ -22,3 +22,9 @@ seed: 42
 max_plates: null
 max_wells: null
 max_organoids: null
+
+# Optional plate-name filtering when input_path points to a folder of *.zarr
+# Example include: "exp164-diff(0|8)\\.zarr$"
+# Example exclude: "_backup\\.zarr$"
+include_plate_regex: null
+exclude_plate_regex: null
