@@ -78,8 +78,45 @@ echo "[INFO] [$STARTDATE] [$$] Config: $CONFIG_PATH"
 export OMP_NUM_THREADS=${OMP_NUM_THREADS:-8}
 export MKL_NUM_THREADS=${MKL_NUM_THREADS:-8}
 
-echo "[INFO] [$STARTDATE] [$$] Using pixi environment: gpu"
-pixi run -e gpu python -m sam_trainer.cli embeddings --config "$CONFIG_PATH" -v "${EXTRA_ARGS[@]}"
+# Activate pixi environment (cluster-compatible bootstrap used by other scripts).
+WD="$(pwd)"
+export PATH="$PATH:$WD/infrastructure/apps/pixi/bin"
+export PIXI_CACHE_DIR="$WD/infrastructure/apps/pixi/.pixi_cache"
+export TMPDIR="$WD/infrastructure/.tmp_$USER"
+mkdir -p "$TMPDIR"
+
+PIXIBIN="$WD/infrastructure/apps/pixi/bin/pixi"
+if command -v pixi >/dev/null 2>&1; then
+    PIXI_CMD="pixi"
+elif [[ -x "$PIXIBIN" ]]; then
+    PIXI_CMD="$PIXIBIN"
+else
+    if [[ -f "$WD/install.sh" ]]; then
+        echo "[INFO] Pixi binary not found; running install.sh"
+        bash "$WD/install.sh"
+        if command -v pixi >/dev/null 2>&1; then
+            PIXI_CMD="pixi"
+        elif [[ -x "$PIXIBIN" ]]; then
+            PIXI_CMD="$PIXIBIN"
+        else
+            echo "[ERROR] Pixi is still not available after install.sh"
+            exit 1
+        fi
+    else
+        echo "[ERROR] Pixi not found and install.sh is missing"
+        exit 1
+    fi
+fi
+
+if [[ "$LOCAL_MODE" == true ]]; then
+    ENV_NAME="cpu"
+else
+    ENV_NAME="gpu"
+fi
+
+echo "[INFO] [$STARTDATE] [$$] Using pixi environment: $ENV_NAME"
+"$PIXI_CMD" install -e "$ENV_NAME"
+"$PIXI_CMD" run -e "$ENV_NAME" python -m sam_trainer.cli embeddings --config "$CONFIG_PATH" -v "${EXTRA_ARGS[@]}"
 
 END=$(date +%s)
 ENDDATE=$(date -Iseconds)
