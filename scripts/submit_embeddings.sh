@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --account=dlthings
-#SBATCH --job-name=sam_embeddings
+#SBATCH --job-name=embeddings
 #SBATCH --output=logs/%x-%j.out
 #SBATCH --error=logs/%x-%j.err
 #SBATCH --cpus-per-task=16
@@ -10,7 +10,7 @@
 #SBATCH --partition=main
 #SBATCH --mem=64G
 #SBATCH --gres=gpu:1
-#SBATCH --constraint="infiniband&gpuram80gb"
+#SBATCH --constraint="infiniband&gpuram48gb"
 #SBATCH --time=08:00:00
 
 # Usage:
@@ -78,14 +78,8 @@ echo "[INFO] [$STARTDATE] [$$] Config: $CONFIG_PATH"
 export OMP_NUM_THREADS=${OMP_NUM_THREADS:-8}
 export MKL_NUM_THREADS=${MKL_NUM_THREADS:-8}
 
-if [[ "$LOCAL_MODE" == true ]]; then
-    ENV_NAME="cpu"
-else
-    ENV_NAME="gpu"
-fi
-
 echo "[INFO] [$STARTDATE] [$$] Using pixi environment: $ENV_NAME"
-pixi run -e "$ENV_NAME" python -m sam_trainer.cli embeddings --config "$CONFIG_PATH" -v "${EXTRA_ARGS[@]}"
+pixi run -e gpu python -m sam_trainer.cli embeddings --config "$CONFIG_PATH" -v "${EXTRA_ARGS[@]}"
 
 END=$(date +%s)
 ENDDATE=$(date -Iseconds)
