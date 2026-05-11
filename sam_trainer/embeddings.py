@@ -240,17 +240,18 @@ def run_embeddings_extraction(
     schema_payload = {
         "identity_columns": ["composite_id", "plate", "well", "label_id"],
         "mean_columns": (
-            [c for c in mean_df.columns if c.startswith("emb_m_")] if mean_df is not None else []
+            [c for c in mean_df.columns if c.startswith("emb_m_")]
+            if mean_df is not None
+            else []
         ),
         "mean_std_max_columns": [
             c
             for c in (mean_std_max_df.columns if mean_std_max_df is not None else [])
-            if c.startswith("emb_m_") or c.startswith("emb_s_") or c.startswith("emb_x_")
+            if c.startswith("emb_m_")
+            or c.startswith("emb_s_")
+            or c.startswith("emb_x_")
         ],
-        "dtypes": {
-            c: str(t)
-            for c, t in schema_df.dtypes.items()
-        },
+        "dtypes": {c: str(t) for c, t in schema_df.dtypes.items()},
     }
     schema_path.write_text(json.dumps(schema_payload, indent=2), encoding="utf-8")
 
@@ -259,7 +260,9 @@ def run_embeddings_extraction(
         "plate_count": len(plate_paths),
         "manifest_rows": int(len(manifest_df)),
         "mean_rows": int(len(mean_df)) if mean_df is not None else 0,
-        "mean_std_max_rows": int(len(mean_std_max_df)) if mean_std_max_df is not None else 0,
+        "mean_std_max_rows": int(len(mean_std_max_df))
+        if mean_std_max_df is not None
+        else 0,
         "skipped_rows": int(len(skipped_df)),
         "encoder_forward_calls": encoder_calls,
         "seed": config.seed,
@@ -278,7 +281,9 @@ def run_embeddings_extraction(
         "run_dir": run_dir,
         "manifest": manifest_path,
         "mean_embeddings": mean_path if mean_df is not None else None,
-        "mean_std_max_embeddings": mean_std_max_path if mean_std_max_df is not None else None,
+        "mean_std_max_embeddings": mean_std_max_path
+        if mean_std_max_df is not None
+        else None,
         "schema": schema_path,
         "summary": summary_path,
         "skipped": skipped_path,
@@ -358,7 +363,9 @@ def _compute_feature_map(image: np.ndarray, predictor, segmenter) -> np.ndarray:
     segmenter.initialize(image)
     features = predictor.features
     if features is None:
-        raise RuntimeError("Predictor features were not populated after initialize(image)")
+        raise RuntimeError(
+            "Predictor features were not populated after initialize(image)"
+        )
     if isinstance(features, torch.Tensor):
         features_np = features.detach().cpu().numpy()
     else:

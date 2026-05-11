@@ -91,8 +91,8 @@ def process_well(
             channel_index=channel_index,
         )
 
-        # lbl_writer expects (1, H, W) — add the channel dim SAM dropped
-        lbl_writer(patch=masks[np.newaxis].astype(np.uint8))
+        # NGIO label writer expects a 2D label patch for this ROI.
+        lbl_writer(patch=masks.astype(np.uint32, copy=False))
 
         n_instances = len(np.unique(masks)) - 1
         total_instances += n_instances
