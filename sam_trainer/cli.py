@@ -15,9 +15,11 @@ from sam_trainer.config import (
     AugmentationConfig,
     EmbeddingsExtractionConfig,
     PipelineConfig,
+    PreprocessingConfig,
     TrainingConfig,
 )
 from sam_trainer.embeddings import run_embeddings_extraction
+from sam_trainer.preprocessing import run_preprocessing
 from sam_trainer.training import run_training
 
 app = typer.Typer(
@@ -26,6 +28,21 @@ app = typer.Typer(
     add_completion=False,
 )
 console = Console()
+
+
+def _resolve_default_preprocessing_output_dir(
+    preprocessing: PreprocessingConfig,
+    pipeline_config: PipelineConfig,
+    experiment_dir: Path,
+) -> Path:
+    if preprocessing.output_dir is not None:
+        return preprocessing.output_dir
+
+    if pipeline_config.augmentation is not None:
+        aug_output = pipeline_config.augmentation.output_dir
+        return aug_output.parent / f"{aug_output.name}_padded"
+
+    return experiment_dir / "preprocessed"
 
 
 def setup_logging(verbosity: int) -> None:
@@ -287,6 +304,45 @@ def train(
     else:
         console.print("[dim]Skipping augmentation[/dim]")
 
+    # Run preprocessing if configured
+    if config.preprocessing is not None:
+        if config.training.is_zarr_mode():
+            console.print(
+                "[bold red]Error:[/bold red] Preprocessing currently supports traditional directory mode only"
+            )
+            raise typer.Exit(1)
+
+        console.print("[bold]Running preprocessing (pad-to-max)...[/bold]")
+        try:
+            pre_cfg = config.preprocessing.model_copy(deep=True)
+            if config.augmentation is not None:
+                pre_cfg.input_images_dir = config.augmentation.output_dir / "images"
+                pre_cfg.input_labels_dir = config.augmentation.output_dir / "labels"
+            pre_cfg.output_dir = _resolve_default_preprocessing_output_dir(
+                pre_cfg, config, experiment_dir
+            )
+
+            pre_stats = run_preprocessing(pre_cfg)
+
+            config.training.images_dir = pre_stats["output_images_dir"]
+            config.training.labels_dir = pre_stats["output_labels_dir"]
+
+            old_patch_shape = tuple(config.training.patch_shape)
+            new_patch_shape = pre_stats["patch_shape"]
+            config.training.patch_shape = new_patch_shape
+
+            console.print(
+                f"[green]✓[/green] Preprocessed {pre_stats['n_pairs']} pairs to {pre_stats['output_dir']}"
+            )
+            console.print(
+                f"[yellow]Patch shape overridden[/yellow]: {old_patch_shape} -> {new_patch_shape}"
+            )
+        except Exception as e:
+            console.print(f"[bold red]Error during preprocessing:[/bold red] {e}")
+            raise typer.Exit(1)
+    else:
+        console.print("[dim]Skipping preprocessing[/dim]")
+
     # Run training
     console.print("\n[bold]Running training...[/bold]")
     try:
@@ -351,6 +407,41 @@ def augment(
         console.print(
             f"Generated {stats['total_output_pairs']} image pairs in {output_format} format"
         )
+    except Exception as e:
+        console.print(f"[bold red]Error:[/bold red] {e}")
+        raise typer.Exit(1)
+
+
+@app.command()
+def preprocess(
+    images_dir: Path = typer.Option(
+        ..., "--images", "-i", help="Input images directory"
+    ),
+    labels_dir: Path = typer.Option(
+        ..., "--labels", "-l", help="Input labels directory"
+    ),
+    output_dir: Path = typer.Option(..., "--output", "-o", help="Output directory"),
+    verbose: int = typer.Option(
+        0, "--verbose", "-v", count=True, help="Increase logging verbosity"
+    ),
+) -> None:
+    """Run pad-to-max preprocessing only (without training)."""
+    setup_logging(verbose)
+
+    pre_config = PreprocessingConfig(
+        input_images_dir=images_dir,
+        input_labels_dir=labels_dir,
+        output_dir=output_dir,
+        mode="pad_to_max",
+        pad_alignment="center",
+    )
+
+    try:
+        stats = run_preprocessing(pre_config)
+        console.print("\n[bold green]✓[/bold green] Preprocessing complete!")
+        console.print(f"Output dir: {stats['output_dir']}")
+        console.print(f"Computed patch_shape: {stats['patch_shape']}")
+        console.print(f"Processed pairs: {stats['n_pairs']}")
     except Exception as e:
         console.print(f"[bold red]Error:[/bold red] {e}")
         raise typer.Exit(1)

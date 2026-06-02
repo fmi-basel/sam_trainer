@@ -1,11 +1,17 @@
 experiment_name: "day8_whole_img_lr5-e5"
 output_base_dir: "runs"
 augmentation: null
+preprocessing:
+  input_images_dir: "dat/day_8_aug/images"
+  input_labels_dir: "dat/day_8_aug/labels"
+  output_dir: null  # auto: runs/<experiment>/preprocessed (or sibling of augmentation output)
+  mode: "pad_to_max"
+  pad_alignment: "center"
 training:
   images_dir: "dat/day_8_aug/images"
   labels_dir: "dat/day_8_aug/labels"
   model_type: "vit_b_lm"
-  patch_shape: [2048, 2048]  # Full image size - no cropping/patching
+  patch_shape: [2048, 2048]  # Will be overwritten by preprocessing max shape
   batch_size: 6  # Increased from 1 - plenty of GPU memory available (only using 13GB/80GB)
   n_epochs: 200  # Longer training since we see each image once per epoch
   n_samples: null  # null = use actual dataset size (all images, no random sampling)

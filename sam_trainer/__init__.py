@@ -10,15 +10,17 @@ __version__ = "0.1.0"
 __author__ = "Niklas Khoss"
 
 from sam_trainer.config import (
-	AugmentationConfig,
-	EmbeddingsExtractionConfig,
-	PipelineConfig,
-	TrainingConfig,
+    AugmentationConfig,
+    EmbeddingsExtractionConfig,
+    PipelineConfig,
+    PreprocessingConfig,
+    TrainingConfig,
 )
 
 __all__ = [
-	"AugmentationConfig",
-	"TrainingConfig",
-	"PipelineConfig",
-	"EmbeddingsExtractionConfig",
+    "AugmentationConfig",
+    "TrainingConfig",
+    "PipelineConfig",
+    "EmbeddingsExtractionConfig",
+    "PreprocessingConfig",
 ]

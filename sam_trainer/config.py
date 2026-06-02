@@ -1,7 +1,7 @@
 """Configuration schemas for SAM training pipeline using Pydantic."""
 
-from pathlib import Path
 import re
+from pathlib import Path
 from typing import Literal, Optional
 
 from pydantic import BaseModel, Field, field_validator
@@ -58,6 +58,39 @@ class AugmentationConfig(BaseModel):
     def validate_input_dirs_exist(cls, v: Path) -> Path:
         if not v.exists():
             raise ValueError(f"Directory does not exist: {v}")
+        return v
+
+    class Config:
+        extra = "forbid"
+
+
+class PreprocessingConfig(BaseModel):
+    """Configuration for final training-data preprocessing."""
+
+    input_images_dir: Path = Field(
+        ..., description="Directory containing input images for preprocessing"
+    )
+    input_labels_dir: Path = Field(
+        ..., description="Directory containing input labels for preprocessing"
+    )
+    output_dir: Optional[Path] = Field(
+        default=None,
+        description="Output directory for preprocessed data (auto-resolved if omitted)",
+    )
+    mode: Literal["pad_to_max"] = Field(
+        default="pad_to_max",
+        description="Preprocessing mode (currently only center pad-to-max)",
+    )
+    pad_alignment: Literal["center"] = Field(
+        default="center",
+        description="How to place original image inside padded canvas",
+    )
+
+    @field_validator("input_images_dir", "input_labels_dir")
+    @classmethod
+    def validate_input_dirs(cls, v: Path) -> Path:
+        # Don't validate existence during config creation.
+        # Preprocessing may consume outputs from earlier pipeline stages.
         return v
 
     class Config:
@@ -273,6 +306,10 @@ class PipelineConfig(BaseModel):
 
     augmentation: Optional[AugmentationConfig] = Field(
         default=None, description="Augmentation config (None to skip)"
+    )
+    preprocessing: Optional[PreprocessingConfig] = Field(
+        default=None,
+        description="Optional preprocessing config (executed before training)",
     )
     training: TrainingConfig = Field(..., description="Training configuration")
 

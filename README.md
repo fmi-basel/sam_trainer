@@ -107,6 +107,20 @@ pixi run augment \
     -vv
 ```
 
+### Preprocessing Only (Pad to Max)
+
+Run center pad-to-max preprocessing as a standalone step:
+
+```bash
+pixi run preprocess \
+    --images data/augmented/images \
+    --labels data/augmented/labels \
+    --output data/augmented_padded \
+    -vv
+```
+
+During `train`, if `preprocessing` is configured, preprocessing runs after augmentation and `training.patch_shape` is automatically overwritten to the computed max spatial shape.
+
 ### Training Without Augmentation
 
 Create a config without augmentation:
@@ -340,8 +354,23 @@ augmentation:
   gaussian_blur_prob: 0.3
   gaussian_noise_prob: 0.3
   brightness_contrast: true
-  elastic_transform: false
 ```
+
+### Preprocessing Config
+
+```yaml
+preprocessing:
+    input_images_dir: "data/augmented/images"
+    input_labels_dir: "data/augmented/labels"
+    output_dir: null               # null => auto-resolved by train command
+    mode: "pad_to_max"
+    pad_alignment: "center"
+```
+
+Notes:
+
+- Preprocessing currently supports traditional directory mode only (not zarr mode).
+- In `train`, `training.patch_shape` is always overridden when preprocessing is enabled.
 
 ### Training Config
 
