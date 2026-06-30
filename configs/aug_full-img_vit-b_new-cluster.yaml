@@ -1,0 +1,37 @@
+experiment_name: "grosshans_SWI_aug6_vit_b_lm"
+output_base_dir: "runs"
+augmentation:
+  input_images_dir: "/tachyon/groups/scratch/gmicro_ipa/ggrossha/ancneagu/swi_annotations/images_unstacked"
+  input_labels_dir: "/tachyon/groups/scratch/gmicro_ipa/ggrossha/ancneagu/swi_annotations/masks_unstacked"
+  output_dir: "/tachyon/groups/scratch/gmicro_ipa/ggrossha/ancneagu/swi_annotations/augmented"
+  output_format: "original"
+  n_augmentations: 5
+  include_original: true
+  allow_rotate_90: true
+  treat_3d_as_2d: false
+training:
+  images_dir: "/tachyon/groups/scratch/gmicro_ipa/ggrossha/ancneagu/swi_annotations/augmented/images"
+  labels_dir: "/tachyon/groups/scratch/gmicro_ipa/ggrossha/ancneagu/swi_annotations/augmented/labels"
+  model_type: "vit_b_lm"
+  patch_shape: [1024, 1024]
+  batch_size: 6
+  n_epochs: 100
+  n_samples: null
+  num_workers: 12
+  learning_rate: 5.0e-5
+  early_stopping: 20
+  val_split: 0.05
+  shuffle_data: true
+  shuffle_seed: 42
+  train_instance_segmentation_only: false
+  normalize_inputs: true
+  normalize_lower_percentile: 1.0
+  normalize_upper_percentile: 99.5
+  use_min_instance_sampler: false
+  min_instances_per_patch: 1
+  min_instance_size: 1
+  save_validation_predictions_frequency: null
+  checkpoint_name: "grosshans_SWI_aug6_checkpoint"
+  resume_from_checkpoint: null
+  export_path: "runs/SWI/grosshans_SWI_aug6_model.pt"
+log_level: "INFO"

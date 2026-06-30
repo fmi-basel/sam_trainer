@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -c \"import micro_sam.training; import inspect; print\\(inspect.getfile\\(micro_sam.training\\)\\)\")",
+      "PowerShell(head *)"
+    ]
+  }
+}

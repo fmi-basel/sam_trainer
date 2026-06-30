@@ -223,7 +223,7 @@ def run_augmentation(config: AugmentationConfig) -> dict[str, int]:
     total_generated = 0
 
     for idx, (img_path, label_path) in enumerate(zip(image_paths, label_paths)):
-        logger.info(f"Processing {idx + 1}/{len(image_paths)}: {img_path.name}")
+        # logger.info(f"Processing {idx + 1}/{len(image_paths)}: {img_path.name}")
 
         # Read image and label
         image = read_image(img_path)
