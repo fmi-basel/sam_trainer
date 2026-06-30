@@ -71,6 +71,9 @@ venv.bak/
 # IDEs
 .vscode/
 .idea/
+
+# Claude Code
+.claude/
 *.swp
 *.swo
 *~
