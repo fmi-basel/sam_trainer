@@ -223,8 +223,6 @@ def run_training(config: TrainingConfig, output_dir: Path) -> dict[str, Path]:
     logger.info(f"Using {config.num_workers} dataloader workers")
 
     raw_transform = _build_raw_transform(config)
-    train_sampler = None
-    val_sampler = None
     if config.use_min_instance_sampler:
         train_sampler = MinInstanceSampler(
             config.min_instances_per_patch,
@@ -239,6 +237,12 @@ def run_training(config: TrainingConfig, output_dir: Path) -> dict[str, Path]:
             config.min_instances_per_patch,
             config.min_instance_size,
         )
+    else:
+        # micro_sam's default_sam_dataset injects MinInstanceSampler(2, min_size=25) when sampler=None.
+        # Pass a trivial sampler to suppress that behaviour and accept all patches.
+        train_sampler = lambda raw, labels: True  # noqa: E731
+        val_sampler = lambda raw, labels: True  # noqa: E731
+        logger.info("Sampler disabled: accepting all patches")
 
     loader_kwargs = {
         "batch_size": config.batch_size,

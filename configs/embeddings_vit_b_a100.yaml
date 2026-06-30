@@ -1,4 +1,4 @@
-run_name: embeddings_vit_b_a100
+run_name: embeddings_vit_b_1
 output_base_dir: runs/embeddings_baseline
 
 # Either point to a single plate .zarr or a directory containing *.zarr plates
@@ -8,7 +8,7 @@ field_path: "0"
 label_level: 0
 
 model_type: vit_b_lm
-model_path: final_models/organoids_gturco.pt
+model_path: final_models/organoids_turco.pt
 device: auto
 channel: null
 
@@ -26,5 +26,5 @@ max_organoids: null
 # Optional plate-name filtering when input_path points to a folder of *.zarr
 # Example include: "exp164-diff(0|8)\\.zarr$"
 # Example exclude: "_backup\\.zarr$"
-include_plate_regex: null
+include_plate_regex: "diff8\\.zarr$"
 exclude_plate_regex: null
