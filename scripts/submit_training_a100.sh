@@ -27,6 +27,13 @@ function display_memory_usage() {
 
 trap display_memory_usage EXIT
 
+# Activate pixi environment (cluster-compatible bootstrap used by other scripts).
+WD="$(pwd)"
+export PATH="$PATH:$WD/infrastructure/apps/pixi/bin"
+export PIXI_CACHE_DIR="$WD/infrastructure/apps/pixi/.pixi_cache"
+export TMPDIR="$WD/infrastructure/.tmp_$USER"
+mkdir -p "$TMPDIR"
+
 START=$(date +%s)
 STARTDATE=$(date -Iseconds)
 echo "[INFO] [$STARTDATE] [$$] Starting SLURM job $SLURM_JOB_ID"

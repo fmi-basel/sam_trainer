@@ -7,24 +7,15 @@
 #SBATCH --ntasks-per-node=1
 #SBATCH --partition=main
 #SBATCH --mem=150G
-#SBATCH --gres=gpu:1
+#SBATCH --gres=gpu:nvidia_h100_nvl:1
 #SBATCH --time=56:00:00
 #SBATCH --output=logs/%x-%j.out
 #SBATCH --error=logs/%x-%j.err
 
-# SAM Training SLURM Batch Script (A100 / 80GB GPU)
-# Usage: sbatch scripts/submit_training_a100.sh <path_to_config.yaml>
+# SAM Training SLURM Batch Script (H100 / 98GB GPU)
+# Usage: sbatch scripts/submit_training_h100.sh <path_to_config.yaml>
 
 set -eu
-
-function display_memory_usage() {
-    set +eu
-    echo -n "[INFO] [$(date -Iseconds)] [$$] Max memory usage in bytes: "
-    cat /sys/fs/cgroup/memory/slurm/uid_$(id -u)/job_${SLURM_JOB_ID}/memory.max_usage_in_bytes
-    echo
-}
-
-trap display_memory_usage EXIT
 
 # Activate pixi environment (cluster-compatible bootstrap used by other scripts).
 WD="$(pwd)"
@@ -43,7 +34,7 @@ echo "[INFO] [$STARTDATE] [$$] Working directory: $(pwd)"
 # Check if config file was provided
 if [ $# -eq 0 ]; then
     echo "[ERROR] No config file provided"
-    echo "Usage: sbatch scripts/submit_training_a100.sh <path_to_config.yaml>"
+    echo "Usage: sbatch scripts/submit_training_new_cluster.sh <path_to_config.yaml>"
     exit 1
 fi
 
