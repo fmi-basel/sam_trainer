@@ -239,10 +239,10 @@ def run_training(config: TrainingConfig, output_dir: Path) -> dict[str, Path]:
         )
     else:
         # micro_sam's default_sam_dataset injects MinInstanceSampler(2, min_size=25) when sampler=None.
-        # Pass a trivial sampler to suppress that behaviour and accept all patches.
-        train_sampler = lambda raw, labels: True  # noqa: E731
-        val_sampler = lambda raw, labels: True  # noqa: E731
-        logger.info("Sampler disabled: accepting all patches")
+        # Pass a minimal sampler to suppress that behaviour while still filtering empty patches.
+        train_sampler = MinInstanceSampler(1, min_size=1)
+        val_sampler = MinInstanceSampler(1, min_size=1)
+        logger.info("Using permissive MinInstanceSampler (min_instances=1, min_size=1)")
 
     loader_kwargs = {
         "batch_size": config.batch_size,
@@ -362,7 +362,14 @@ def run_training(config: TrainingConfig, output_dir: Path) -> dict[str, Path]:
 
     if config.resume_from_checkpoint is not None:
         logger.info(f"Resuming from checkpoint: {config.resume_from_checkpoint}")
-        base_kwargs["checkpoint_path"] = str(config.resume_from_checkpoint)
+        if config.train_instance_segmentation_only:
+            # train_instance_segmentation uses checkpoint_path only for SAM encoder init,
+            # not for resuming the UNETR decoder. Resume is handled by DefaultTrainer
+            # automatically when overwrite_training=False (it finds the checkpoint via
+            # save_root + checkpoint_name).
+            base_kwargs["overwrite_training"] = False
+        else:
+            base_kwargs["checkpoint_path"] = str(config.resume_from_checkpoint)
 
     # Run training
     logger.debug(
