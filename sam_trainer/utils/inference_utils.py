@@ -7,11 +7,13 @@ and segmentation that are used by various inference scripts.
 from typing import Any, Dict, Optional, Tuple
 
 import numpy as np
+import torch
 from micro_sam.automatic_segmentation import (
     automatic_instance_segmentation,
     get_predictor_and_segmenter,
 )
 from micro_sam.instance_segmentation import InstanceSegmentationWithDecoder
+from micro_sam.util import get_sam_model
 
 from sam_trainer.utils.logging import get_logger
 
@@ -27,9 +29,6 @@ def load_model_with_decoder(
 ) -> Tuple:
     """Load an exported model with either decoder or AMG segmentation.
 
-    This uses micro-SAM's get_predictor_and_segmenter which properly handles
-    both AMG and decoder-based (AIS) modes.
-
     Args:
         model_type: SAM model type (e.g., 'vit_b_lm', 'vit_l_lm')
         device: Device to load model on ('cuda' or 'cpu')
@@ -39,26 +38,47 @@ def load_model_with_decoder(
         **amg_kwargs: Additional kwargs for AMG (pred_iou_thresh, stability_score_thresh, etc.)
 
     Returns:
-        Tuple of (predictor, segmenter) where:
-            - predictor: SAM predictor for image encoding
-            - segmenter: InstanceSegmentationWithDecoder or AMG for generating masks
+        Tuple of (predictor, segmenter)
 
     Raises:
         Exception: If model loading fails
     """
     mode = "AMG" if use_amg else "AIS (decoder-based)"
     logger.info(f"Loading model with {mode} segmentation")
+    segmentation_mode = "amg" if use_amg else "ais"
 
-    # Use get_predictor_and_segmenter which properly handles both modes.
-    # When checkpoint=None, micro-SAM downloads/uses the cached pre-trained model for model_type.
+    if model_path is not None:
+        state = torch.load(model_path, map_location="cpu", weights_only=False)
+        if isinstance(state, dict) and "decoder_state" in state:
+            # Exported instance-segmentation model (encoder + UNETR decoder).
+            # get_predictor_and_segmenter passes the checkpoint to get_sam_model which
+            # calls sam.load_state_dict on the full dict — failing on decoder_state.
+            # Fix: load SAM encoder with flexible_load_checkpoint (ignores unknown keys),
+            # then supply the pre-loaded state so get_predictor_and_segmenter can pick
+            # up decoder_state without re-loading the file.
+            predictor = get_sam_model(
+                model_type=model_type,
+                device=device,
+                checkpoint_path=model_path,
+                flexible_load_checkpoint=True,
+            )
+            _, segmenter = get_predictor_and_segmenter(
+                model_type=model_type,
+                predictor=predictor,
+                state=state,
+                device=device,
+                segmentation_mode=segmentation_mode,
+                **amg_kwargs,
+            )
+            return predictor, segmenter
+
     predictor, segmenter = get_predictor_and_segmenter(
         model_type=model_type,
         checkpoint=model_path,
         device=device,
-        amg=use_amg,  # This tells micro-SAM which mode to use
+        segmentation_mode=segmentation_mode,
         **amg_kwargs,
     )
-
     return predictor, segmenter
 
 
@@ -194,15 +214,9 @@ def segment_image(
     image = _to_2d(image, channel_index=channel_index)
 
     if isinstance(segmenter, InstanceSegmentationWithDecoder) and not use_amg:
-        # Decoder-based segmentation: use initialize + generate pattern
+        # generate() returns a 2D integer label array directly (output_mode="instance_segmentation")
         segmenter.initialize(image)
-        predictions = segmenter.generate(**generate_kwargs)
-
-        # Convert predictions (list of dicts) to label image
-        masks = np.zeros(image.shape, dtype=np.uint32)
-        for idx, pred in enumerate(predictions, start=1):
-            mask = pred["segmentation"]
-            masks[mask > 0] = idx
+        masks = segmenter.generate(**generate_kwargs)
     else:
         # AMG-based segmentation: use automatic_instance_segmentation
         masks = automatic_instance_segmentation(

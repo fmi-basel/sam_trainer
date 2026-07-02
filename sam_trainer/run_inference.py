@@ -58,37 +58,38 @@ def is_zarr_path(path: Path) -> bool:
 
 
 def load_tiff_image(image_path: Path, channel_index: int = 0) -> np.ndarray:
-    """Load a TIFF image and return 2D array.
+    """Load a TIFF image and return a 2D or 3D (Z, H, W) array.
+
+    Multi-channel images collapse to a single channel. Z-stacks are returned as-is (Z, H, W).
 
     Args:
         image_path: Path to TIFF file
         channel_index: Channel to select from multi-channel images. Default: 0.
 
     Returns:
-        2D numpy array (grayscale image)
+        2D (H, W) or 3D (Z, H, W) numpy array.
     """
     img = tifffile.imread(image_path)
 
-    # Handle different image shapes
     if img.ndim == 2:
         return img
-    elif img.ndim == 3:
+
+    if img.ndim == 3:
+        # Heuristic: if first dim is small and smaller than spatial dims → channels-first
         if img.shape[0] <= 4 and img.shape[0] < min(img.shape[1:]):
-            # Likely channels-first (C, H, W)
-            logger.debug(
-                f"  Shape: {img.shape} - treating as multi-channel, "
-                f"using channel {channel_index}"
-            )
+            logger.debug(f"  Shape {img.shape}: multi-channel, selecting channel {channel_index}")
             return img[channel_index]
-        else:
-            # Likely Z-stack or channels-last
-            logger.debug(f"  Shape: {img.shape} - taking slice/channel {channel_index}")
-            return img[channel_index]
-    else:
-        logger.warning(
-            f"  Unexpected shape {img.shape}, taking channel {channel_index}"
-        )
+        # Otherwise treat as Z-stack
+        logger.debug(f"  Shape {img.shape}: Z-stack with {img.shape[0]} slices")
+        return img
+
+    if img.ndim == 4:
+        # (C, Z, H, W) or (Z, C, H, W) — take channel from axis 0 or 1
+        logger.debug(f"  Shape {img.shape}: 4D, selecting channel {channel_index} on axis 0")
         return img[channel_index]
+
+    logger.warning(f"  Unexpected shape {img.shape}, taking index {channel_index} on axis 0")
+    return img[channel_index]
 
 
 def save_tiff_masks(masks: np.ndarray, output_path: Path) -> None:
@@ -253,35 +254,48 @@ def process_tiff_images(
                     continue
 
             try:
-                # Load image
                 image = load_tiff_image(image_path, channel_index=tiff_channel_index)
                 logger.debug(f"Loaded {image_path.name} with shape {image.shape}")
 
-                # Run inference
-                masks = segment_image(
-                    image,
-                    predictor,
-                    segmenter,
-                    use_amg=use_amg,
-                    # tile_shape=tile_shape_tuple,
-                    # halo=halo_tuple,
-                    generate_kwargs=generate_kwargs,
-                )
+                if image.ndim == 3:
+                    # Z-stack: process each slice independently, build 3D label volume
+                    n_z = image.shape[0]
+                    slice_masks = []
+                    for z in range(n_z):
+                        m = segment_image(
+                            image[z],
+                            predictor,
+                            segmenter,
+                            use_amg=use_amg,
+                            generate_kwargs=generate_kwargs,
+                        )
+                        m, removed = postprocess_masks(
+                            m,
+                            min_area=min_instance_area,
+                            border_margin=border_margin,
+                            max_instances=max_instances,
+                        )
+                        slice_masks.append(m)
+                    masks = np.stack(slice_masks, axis=0)
+                    n_instances = sum(len(np.unique(s)) - 1 for s in slice_masks)
+                    logger.info(f"  {image_path.name}: {n_z} slices, {n_instances} total instances")
+                else:
+                    masks = segment_image(
+                        image,
+                        predictor,
+                        segmenter,
+                        use_amg=use_amg,
+                        generate_kwargs=generate_kwargs,
+                    )
+                    masks, removed = postprocess_masks(
+                        masks,
+                        min_area=min_instance_area,
+                        border_margin=border_margin,
+                        max_instances=max_instances,
+                    )
+                    n_instances = len(np.unique(masks)) - 1
+                    logger.info(f"  {image_path.name}: Found {n_instances} instances")
 
-                # Postprocess masks
-                masks, removed = postprocess_masks(
-                    masks,
-                    min_area=min_instance_area,
-                    border_margin=border_margin,
-                    max_instances=max_instances,
-                )
-                if removed:
-                    logger.debug(f"  Post-processing removed {removed} instances")
-
-                n_instances = len(np.unique(masks)) - 1  # Subtract background
-                logger.info(f"  {image_path.name}: Found {n_instances} instances")
-
-                # Save results
                 output_path = output_dir / f"{image_path.stem}_masks.tif"
                 save_tiff_masks(masks, output_path)
 
