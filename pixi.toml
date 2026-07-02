@@ -30,15 +30,16 @@ ipywidgets = ">=8.1.8,<9"
 
 [pypi-dependencies]
 sam_trainer = { path = ".", editable = true }
+simsimd = ">=5.0"
 
 # Optional features for GPU/CPU specific PyTorch builds
-
-[feature.gpu.system-requirements]
-cuda = "12.0"
 
 [feature.gpu.dependencies]
 cuda-version = "12.6.*"
 pytorch-gpu = "*"
+
+[feature.gpu.system-requirements]
+cuda = "12.0"
 
 [feature.gpu]
 platforms = ["linux-64", "win-64"]
