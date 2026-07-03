@@ -5,6 +5,7 @@ import random
 from pathlib import Path
 from typing import Optional
 
+import cv2
 import numpy as np
 import torch
 from micro_sam.training import (
@@ -13,6 +14,7 @@ from micro_sam.training import (
     train_instance_segmentation,
     train_sam,
 )
+from micro_sam.util import export_custom_sam_model
 from torch_em.data import MinInstanceSampler
 
 from sam_trainer.config import TrainingConfig
@@ -24,6 +26,12 @@ from sam_trainer.visualization import (
 )
 
 logger = logging.getLogger(__name__)
+
+# OpenCV's internal thread pool corrupts DataLoader worker processes forked
+# after it starts (glibc "free(): corrupted unsorted chunks" / "double free"
+# aborts). Disabling it here, before any DataLoader is constructed, avoids
+# the race.
+cv2.setNumThreads(0)
 
 
 def check_and_visualize_batch(loader, output_dir: Path, name: str):
@@ -445,9 +453,17 @@ def run_training(config: TrainingConfig, output_dir: Path) -> dict[str, Path]:
     export_path.parent.mkdir(parents=True, exist_ok=True)
 
     logger.info(f"Exporting model to {export_path}...")
-    export_instance_segmentation_model(
-        str(best_checkpoint), str(export_path), config.model_type
-    )
+    if config.train_instance_segmentation_only:
+        export_instance_segmentation_model(
+            str(best_checkpoint), str(export_path), config.model_type
+        )
+    else:
+        export_custom_sam_model(
+            checkpoint_path=str(best_checkpoint),
+            model_type=config.model_type,
+            save_path=str(export_path),
+            with_segmentation_decoder=True,
+        )
 
     logger.info("Training complete!")
 

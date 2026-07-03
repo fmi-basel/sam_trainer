@@ -60,6 +60,11 @@ echo "[INFO] [$STARTDATE] [$$] Using config: $CONFIG_PATH"
 export OMP_NUM_THREADS=${OMP_NUM_THREADS:-8}
 export MKL_NUM_THREADS=${MKL_NUM_THREADS:-8}
 
+# tqdm writes one line per \r update; since stderr is redirected to a file
+# (not a TTY) these don't overwrite in place and bloat the log. Throttle to
+# one line per 30s of wall time instead.
+export TQDM_MININTERVAL=${TQDM_MININTERVAL:-30}
+
 # Run training
 echo "[INFO] [$STARTDATE] [$$] Starting SAM training on A100..."
 pixi run -e gpu python -m sam_trainer.cli train --config "$CONFIG_PATH" -v
