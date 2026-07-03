@@ -58,6 +58,11 @@ Adjust decoder thresholds if results are over/under-segmented (defaults 0.5):
 
 **Full-SAM model (AMG)** — same script; mode auto-detected from checkpoint (no `decoder_state` → AMG).
 
+## Known issues
+
+- **Val-split leakage (confirmed 2026-07-03, fix in progress).** `prepare_data_splits` in `training.py` splits the flat list of augmented tiles rather than source stacks. The decoder-only dataset has only 16 unique source stacks (`mip_164_{0,8}_z000-007`), each expanded to ~120 tiles via slicing + 6x augmentation, so augmented variants of the same slice — and adjacent z-slices from the same stack — land in both train and val. This explains why `grosshans_SWI_aug6_decoder-only_lr5e-5` reaches low loss and segments training data perfectly but fails on genuinely unseen `test_data`: the val loss was measuring near-duplicate recognition, not generalization. Diagnostic: `python scripts/diagnosis/check_split_leakage.py <config.yaml>`. Fix: group split by stack ID (see git log on this branch for the commit).
+- **Train/inference normalization mismatch (open, secondary).** `PercentileNormalizer` (training.py) is applied during training but was not confirmed wired into `run_inference.py` / `inference_utils.py`. Worth checking independently of the split fix by manually applying the same normalizer before inference on an existing checkpoint.
+
 ## Key fixes on branch `swi-training-fixes`
 
 - `training.py`: decoder-only resume now uses `overwrite_training=False` (torch-em auto-resume) instead of passing the UNETR checkpoint as `checkpoint_path` to `get_trainable_sam_model`, which misidentified it as `vit_t`
