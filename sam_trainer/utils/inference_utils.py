@@ -16,6 +16,7 @@ from micro_sam.instance_segmentation import InstanceSegmentationWithDecoder
 from micro_sam.util import get_sam_model
 
 from sam_trainer.utils.logging import get_logger
+from sam_trainer.utils.normalization import PercentileNormalizer
 
 logger = get_logger(__name__)
 
@@ -193,6 +194,9 @@ def segment_image(
     halo: Optional[Tuple[int, int]] = None,
     generate_kwargs: Optional[Dict[str, Any]] = None,
     channel_index: int = 0,
+    normalize: bool = True,
+    normalize_lower_percentile: float = 1.0,
+    normalize_upper_percentile: float = 99.5,
 ) -> np.ndarray:
     """Run instance segmentation on a single image.
 
@@ -206,12 +210,22 @@ def segment_image(
         generate_kwargs: Optional parameters for generate() method (decoder thresholds)
         channel_index: Index of the channel to select from multi-channel patches.
             Default: 0 (first channel).
+        normalize: Apply the same percentile normalization used during training before
+            segmentation. Must match training settings, otherwise the model sees a
+            different input distribution than it was trained on.
+        normalize_lower_percentile: Lower percentile for intensity clipping.
+        normalize_upper_percentile: Upper percentile for intensity clipping.
 
     Returns:
         Instance segmentation masks as 2D numpy array with integer labels
     """
     generate_kwargs = generate_kwargs or {}
     image = _to_2d(image, channel_index=channel_index)
+
+    if normalize:
+        image = PercentileNormalizer(normalize_lower_percentile, normalize_upper_percentile)(
+            image
+        )
 
     if isinstance(segmenter, InstanceSegmentationWithDecoder) and not use_amg:
         # generate() returns a 2D integer label array directly (output_mode="instance_segmentation")

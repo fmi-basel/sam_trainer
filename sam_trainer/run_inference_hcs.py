@@ -48,6 +48,9 @@ def process_well(
     use_amg: bool = False,
     generate_kwargs: dict = None,
     channel: Optional[str] = None,
+    normalize: bool = True,
+    normalize_lower_percentile: float = 1.0,
+    normalize_upper_percentile: float = 99.5,
 ) -> None:
     """Process a single well in an HCS plate.
 
@@ -89,6 +92,9 @@ def process_well(
             use_amg=use_amg,
             generate_kwargs=generate_kwargs,
             channel_index=channel_index,
+            normalize=normalize,
+            normalize_lower_percentile=normalize_lower_percentile,
+            normalize_upper_percentile=normalize_upper_percentile,
         )
 
         # NGIO label writer expects a 2D label patch for this ROI.
@@ -109,6 +115,9 @@ def process_wells(
     use_amg: bool = False,
     generate_kwargs: dict = None,
     channel: Optional[str] = None,
+    normalize: bool = True,
+    normalize_lower_percentile: float = 1.0,
+    normalize_upper_percentile: float = 99.5,
 ) -> None:
     """Process all wells in an HCS plate.
 
@@ -142,6 +151,9 @@ def process_wells(
                 use_amg=use_amg,
                 generate_kwargs=generate_kwargs,
                 channel=channel,
+                normalize=normalize,
+                normalize_lower_percentile=normalize_lower_percentile,
+                normalize_upper_percentile=normalize_upper_percentile,
             )
 
         except Exception as e:
@@ -158,6 +170,9 @@ def process_single_plate(
     use_amg: bool = False,
     generate_kwargs: dict = None,
     channel: Optional[str] = None,
+    normalize: bool = True,
+    normalize_lower_percentile: float = 1.0,
+    normalize_upper_percentile: float = 99.5,
 ) -> None:
     """Process a single HCS plate.
 
@@ -189,6 +204,9 @@ def process_single_plate(
             use_amg,
             generate_kwargs,
             channel=channel,
+            normalize=normalize,
+            normalize_lower_percentile=normalize_lower_percentile,
+            normalize_upper_percentile=normalize_upper_percentile,
         )
         console.print(f"[green]✓[/green] Plate complete: {plate_path}")
     except Exception as e:
@@ -205,6 +223,9 @@ def process_hcs_plates(
     use_amg: bool = False,
     generate_kwargs: dict = None,
     channel: Optional[str] = None,
+    normalize: bool = True,
+    normalize_lower_percentile: float = 1.0,
+    normalize_upper_percentile: float = 99.5,
 ) -> None:
     """Process either a single plate or all plates in a directory.
 
@@ -253,6 +274,9 @@ def process_hcs_plates(
             use_amg,
             generate_kwargs,
             channel=channel,
+            normalize=normalize,
+            normalize_lower_percentile=normalize_lower_percentile,
+            normalize_upper_percentile=normalize_upper_percentile,
         )
     else:
         # Parent directory - find all .zarr plates
@@ -277,6 +301,9 @@ def process_hcs_plates(
                 use_amg,
                 generate_kwargs,
                 channel=channel,
+                normalize=normalize,
+                normalize_lower_percentile=normalize_lower_percentile,
+                normalize_upper_percentile=normalize_upper_percentile,
             )
 
 
@@ -330,6 +357,22 @@ def main(
         0.5,
         "--foreground-thresh",
         help="Foreground threshold for decoder mode (default: 0.5)",
+    ),
+    normalize: bool = typer.Option(
+        True,
+        "--normalize/--no-normalize",
+        help="Apply percentile normalization before segmentation. Must match training "
+        "settings (default: on, matching training default).",
+    ),
+    normalize_lower_percentile: float = typer.Option(
+        1.0,
+        "--normalize-lower-percentile",
+        help="Lower percentile for intensity clipping (must match training config)",
+    ),
+    normalize_upper_percentile: float = typer.Option(
+        99.5,
+        "--normalize-upper-percentile",
+        help="Upper percentile for intensity clipping (must match training config)",
     ),
     channel: Optional[str] = typer.Option(
         None,
@@ -395,6 +438,9 @@ def main(
         use_amg=use_amg,
         generate_kwargs=generate_kwargs,
         channel=channel,
+        normalize=normalize,
+        normalize_lower_percentile=normalize_lower_percentile,
+        normalize_upper_percentile=normalize_upper_percentile,
     )
 
     console.print("\n[bold green]✓ All inference complete![/bold green]")

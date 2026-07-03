@@ -106,6 +106,9 @@ def process_zarr_image(
     use_amg: bool = False,
     generate_kwargs: dict = None,
     channel: Optional[str] = None,
+    normalize: bool = True,
+    normalize_lower_percentile: float = 1.0,
+    normalize_upper_percentile: float = 99.5,
 ) -> None:
     """Process a single OME-Zarr image and write labels back to zarr.
 
@@ -153,6 +156,9 @@ def process_zarr_image(
                 use_amg=use_amg,
                 generate_kwargs=generate_kwargs,
                 channel_index=channel_index,
+                normalize=normalize,
+                normalize_lower_percentile=normalize_lower_percentile,
+                normalize_upper_percentile=normalize_upper_percentile,
             )
 
             # NGIO label writer expects a 2D label patch for this ROI.
@@ -187,6 +193,9 @@ def process_tiff_images(
     use_amg: bool = False,
     generate_kwargs: dict = None,
     channel: Optional[str] = None,
+    normalize: bool = True,
+    normalize_lower_percentile: float = 1.0,
+    normalize_upper_percentile: float = 99.5,
 ) -> None:
     """Process TIFF images and save masks as separate TIFF files.
 
@@ -268,6 +277,9 @@ def process_tiff_images(
                             segmenter,
                             use_amg=use_amg,
                             generate_kwargs=generate_kwargs,
+                            normalize=normalize,
+                            normalize_lower_percentile=normalize_lower_percentile,
+                            normalize_upper_percentile=normalize_upper_percentile,
                         )
                         m, removed = postprocess_masks(
                             m,
@@ -286,6 +298,9 @@ def process_tiff_images(
                         segmenter,
                         use_amg=use_amg,
                         generate_kwargs=generate_kwargs,
+                        normalize=normalize,
+                        normalize_lower_percentile=normalize_lower_percentile,
+                        normalize_upper_percentile=normalize_upper_percentile,
                     )
                     masks, removed = postprocess_masks(
                         masks,
@@ -399,6 +414,22 @@ def main(
         0.5,
         "--foreground-thresh",
         help="Foreground threshold for decoder mode (default: 0.5)",
+    ),
+    normalize: bool = typer.Option(
+        True,
+        "--normalize/--no-normalize",
+        help="Apply percentile normalization before segmentation. Must match training "
+        "settings (default: on, matching training default).",
+    ),
+    normalize_lower_percentile: float = typer.Option(
+        1.0,
+        "--normalize-lower-percentile",
+        help="Lower percentile for intensity clipping (must match training config)",
+    ),
+    normalize_upper_percentile: float = typer.Option(
+        99.5,
+        "--normalize-upper-percentile",
+        help="Upper percentile for intensity clipping (must match training config)",
     ),
     verbose: int = typer.Option(
         0, "--verbose", "-v", count=True, help="Increase logging verbosity"
@@ -516,6 +547,9 @@ def main(
             use_amg,
             generate_kwargs,
             channel=channel,
+            normalize=normalize,
+            normalize_lower_percentile=normalize_lower_percentile,
+            normalize_upper_percentile=normalize_upper_percentile,
         )
         console.print("\n[bold green]✓ Inference complete![/bold green]")
 
@@ -537,6 +571,9 @@ def main(
                     use_amg,
                     generate_kwargs,
                     channel=channel,
+                    normalize=normalize,
+                    normalize_lower_percentile=normalize_lower_percentile,
+                    normalize_upper_percentile=normalize_upper_percentile,
                 )
             console.print("\n[bold green]✓ All inference complete![/bold green]")
 
@@ -572,6 +609,9 @@ def main(
                 use_amg=use_amg,
                 generate_kwargs=generate_kwargs,
                 channel=channel,
+                normalize=normalize,
+                normalize_lower_percentile=normalize_lower_percentile,
+                normalize_upper_percentile=normalize_upper_percentile,
             )
             console.print("\n[bold green]✓ Inference complete![/bold green]")
             console.print(f"Results saved to: {output_dir}")
