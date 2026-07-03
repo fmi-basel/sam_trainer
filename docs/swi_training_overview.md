@@ -30,6 +30,15 @@ All paths are relative to the project root unless stated otherwise.
 
 Full-SAM warm-start checkpoints are from runs that reached ~50 epochs before crashing (NFS instability on old cluster).
 
+### Split-fix retraining runs (post val-split-leakage fix, see Known issues)
+
+| Config | Experiment dir | Exported model | Notes |
+|--------|---------------|----------------|-------|
+| `configs/swi_decoder-only_lr5e-5_splitfix.yaml` | `runs/grosshans_SWI_splitfix_decoder-only_lr5e-5/` | `runs/SWI/grosshans_SWI_splitfix_decoder-only_lr5e-5_model.pt` | Clean test of the split fix: fresh experiment name/dir, `resume_from_checkpoint: null`, same hyperparameters as `swi_decoder-only_lr5e-5.yaml` otherwise |
+| `configs/swi_full-sam_lr5e-5_resume_splitfix.yaml` | `runs/grosshans_SWI_splitfix_full-sam_lr5e-5/` | `runs/SWI/grosshans_SWI_splitfix_full-sam_lr5e-5_model.pt` | **Not a clean test of the fix** — still warm-starts from `grosshans_SWI_aug6_vit_b_lm_B/checkpoints/.../best.pt`, which was itself trained under the old leaky split. Renamed only to avoid checkpoint collisions; useful as a secondary signal, not proof the fix alone resolves full-SAM behavior. |
+
+New experiment names/dirs are required, not just cosmetic: the pre-existing `runs/grosshans_SWI_aug6_decoder-only_lr5e-5/checkpoints/.../{best,latest}.pt` were trained under the old leaky split, and `train_instance_segmentation`'s auto-resume (`overwrite_training` unset when `resume_from_checkpoint` is `null`) could otherwise silently resume from that checkpoint instead of training cleanly on the fixed split.
+
 ## Submitting
 
 ```bash
@@ -37,6 +46,12 @@ Full-SAM warm-start checkpoints are from runs that reached ~50 epochs before cra
 sbatch scripts/submit_training_new_cluster.sh configs/swi_decoder-only_lr5e-5.yaml
 sbatch scripts/submit_training_new_cluster.sh configs/swi_full-sam_lr1e-5_resume.yaml
 sbatch scripts/submit_training_new_cluster.sh configs/swi_full-sam_lr5e-5_resume.yaml
+```
+
+Split-fix retraining runs (can run in parallel with each other and the above):
+```bash
+sbatch scripts/submit_training_new_cluster.sh configs/swi_decoder-only_lr5e-5_splitfix.yaml
+sbatch scripts/submit_training_new_cluster.sh configs/swi_full-sam_lr5e-5_resume_splitfix.yaml
 ```
 
 ## Inference
