@@ -2,6 +2,7 @@
 
 import logging
 import random
+import re
 from pathlib import Path
 from typing import Optional
 
@@ -145,6 +146,22 @@ def _build_raw_transform(config: TrainingConfig):
     return PercentileNormalizer(lower, upper)
 
 
+_AUG_SUFFIX_RE = re.compile(r"_(?:aug\d+|orig)$")
+_SLICE_RE = re.compile(r"^(.*)_slice\d+")
+
+
+def stack_id(path: Path) -> str:
+    """Recover the source-stack identity of a (possibly augmented, possibly
+    sliced) tile filename, e.g. ``mip_164_0_z000_slice0007_aug003.tif`` ->
+    ``mip_164_0_z000``. Falls back to the bare stem for filenames that don't
+    follow the slice/augmentation naming convention, so each such file is
+    treated as its own group.
+    """
+    stem = _AUG_SUFFIX_RE.sub("", path.stem)
+    match = _SLICE_RE.match(stem)
+    return match.group(1) if match else stem
+
+
 def prepare_data_splits(
     images_dir: Path,
     labels_dir: Path,
@@ -153,12 +170,18 @@ def prepare_data_splits(
     shuffle: bool = True,
     seed: Optional[int] = None,
 ) -> tuple[list[Path], list[Path], list[Path], list[Path]]:
-    """Prepare train/validation splits from data directories.
+    """Prepare train/validation splits from data directories, grouped by source stack.
+
+    Splitting is done at the source-stack level (not per tile) so that
+    augmented variants and adjacent z-slices of the same stack never end up
+    split across train and val — that leakage makes val loss measure
+    near-duplicate recognition rather than generalization.
 
     Args:
         images_dir: Directory containing training images
         labels_dir: Directory containing label masks
-        val_split: Fraction of data to use for validation
+        val_split: Approximate fraction of tiles to use for validation (exact
+            split may overshoot slightly since whole stacks are assigned atomically)
 
     Returns:
         Tuple of (train_images, train_labels, val_images, val_labels)
@@ -174,25 +197,35 @@ def prepare_data_splits(
     if len(image_paths) == 0:
         raise ValueError(f"No images found in {images_dir}")
 
-    # Calculate split index
     n_total = len(image_paths)
-    n_val = max(1, int(n_total * val_split))
-    n_train = n_total - n_val
+    n_val_target = max(1, int(n_total * val_split))
 
-    logger.info(f"Total samples: {n_total}, Train: {n_train}, Val: {n_val}")
+    groups: dict[str, list[int]] = {}
+    for i, path in enumerate(image_paths):
+        groups.setdefault(stack_id(path), []).append(i)
 
-    indices = list(range(n_total))
+    group_ids = list(groups.keys())
     if shuffle:
         rng = random.Random(seed)
-        rng.shuffle(indices)
+        rng.shuffle(group_ids)
 
-    shuffled_images = [image_paths[i] for i in indices]
-    shuffled_labels = [label_paths[i] for i in indices]
+    val_indices: list[int] = []
+    train_indices: list[int] = []
+    for group in group_ids:
+        if len(val_indices) < n_val_target:
+            val_indices.extend(groups[group])
+        else:
+            train_indices.extend(groups[group])
 
-    train_images = shuffled_images[:n_train]
-    train_labels = shuffled_labels[:n_train]
-    val_images = shuffled_images[n_train:]
-    val_labels = shuffled_labels[n_train:]
+    logger.info(
+        f"Total samples: {n_total}, Train: {len(train_indices)}, "
+        f"Val: {len(val_indices)} ({len(groups)} source stacks)"
+    )
+
+    train_images = [image_paths[i] for i in train_indices]
+    train_labels = [label_paths[i] for i in train_indices]
+    val_images = [image_paths[i] for i in val_indices]
+    val_labels = [label_paths[i] for i in val_indices]
 
     return train_images, train_labels, val_images, val_labels
 
