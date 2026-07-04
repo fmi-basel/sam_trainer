@@ -71,12 +71,22 @@ Adjust decoder thresholds if results are over/under-segmented (defaults 0.5):
     --center-dist-thresh 0.3 --boundary-dist-thresh 0.3 --foreground-thresh 0.4
 ```
 
-**Full-SAM model (AMG)** — same script; mode auto-detected from checkpoint (no `decoder_state` → AMG).
+**Full-SAM model (AMG)** — same script, but you must pass `--use-amg` explicitly: `get_predictor_and_segmenter` raises `RuntimeError` if `segmentation_mode="ais"` is requested (the CLI default) against a checkpoint with no `decoder_state`. It is not auto-detected unless `segmentation_mode` is left as `None`/`"auto"`, which the CLI never does.
+
+```bash
+sbatch scripts/submit_inference.sh \
+    runs/SWI/grosshans_SWI_splitfix_full-sam_lr5e-5_model.pt \
+    /tachyon/scratch/gmicro_ipa/ggrossha/ancneagu/swi_annotations/test_data \
+    /tachyon/scratch/gmicro_ipa/ggrossha/ancneagu/swi_annotations/test_inference_splitfix \
+    --use-amg --pattern "*.tiff"
+```
 
 ## Known issues
 
-- **Val-split leakage (confirmed 2026-07-03, fix in progress).** `prepare_data_splits` in `training.py` splits the flat list of augmented tiles rather than source stacks. The decoder-only dataset has only 16 unique source stacks (`mip_164_{0,8}_z000-007`), each expanded to ~120 tiles via slicing + 6x augmentation, so augmented variants of the same slice — and adjacent z-slices from the same stack — land in both train and val. This explains why `grosshans_SWI_aug6_decoder-only_lr5e-5` reaches low loss and segments training data perfectly but fails on genuinely unseen `test_data`: the val loss was measuring near-duplicate recognition, not generalization. Diagnostic: `python scripts/diagnosis/check_split_leakage.py <config.yaml>`. Fix: group split by stack ID (see git log on this branch for the commit).
-- **Train/inference normalization mismatch (open, secondary).** `PercentileNormalizer` (training.py) is applied during training but was not confirmed wired into `run_inference.py` / `inference_utils.py`. Worth checking independently of the split fix by manually applying the same normalizer before inference on an existing checkpoint.
+- **Val-split leakage (confirmed 2026-07-03, fixed in `a0dc7d6`).** `prepare_data_splits` in `training.py` used to split the flat list of augmented tiles rather than source stacks. The decoder-only dataset has only 16 unique source stacks (`mip_164_{0,8}_z000-007`), each expanded to ~120 tiles via slicing + 6x augmentation, so augmented variants of the same slice — and adjacent z-slices from the same stack — landed in both train and val. This explained why `grosshans_SWI_aug6_decoder-only_lr5e-5` reached low loss and segmented training data perfectly but failed on genuinely unseen `test_data`: the val loss was measuring near-duplicate recognition, not generalization. Diagnostic: `python scripts/diagnosis/check_split_leakage.py <config.yaml>`.
+  - **Confirmed by split-fix retraining (2026-07-04):** `swi_decoder-only_lr5e-5_splitfix.yaml` plateaued around loss ~1.06-1.07 and early-stopped after ~28 epochs (vs. the old leaky-split 0.06) — consistent with decoder-only genuinely struggling to generalize from only 16 source stacks once val is a real holdout. Not yet usable for production; treat as confirming the diagnosis, not as a working model.
+  - `swi_full-sam_lr5e-5_resume_splitfix.yaml` ran the full 100 epochs, best epoch 93, best val loss ~0.0376 — a much better generalization signal, though still confounded by warm-starting from a checkpoint (`grosshans_SWI_aug6_vit_b_lm_B`) trained under the old leaky split. Exported to `runs/SWI/grosshans_SWI_splitfix_full-sam_lr5e-5_model.pt`.
+- **Train/inference normalization mismatch (fixed in `69698df`).** `PercentileNormalizer` is now shared between training (`training.py`) and inference (`run_inference.py` / `run_inference_hcs.py` via `inference_utils.segment_image`), applied by default. Override with `--no-normalize` / `--normalize-lower-percentile` / `--normalize-upper-percentile` if a model was trained with different settings.
 
 ## Key fixes on branch `swi-training-fixes`
 
