@@ -46,6 +46,18 @@ Full-SAM warm-start checkpoints are from runs that reached ~50 epochs before cra
 
 New experiment names/dirs are required, not just cosmetic: the pre-existing `runs/grosshans_SWI_aug6_decoder-only_lr5e-5/checkpoints/.../{best,latest}.pt` were trained under the old leaky split, and `train_instance_segmentation`'s auto-resume (`overwrite_training` unset when `resume_from_checkpoint` is `null`) could otherwise silently resume from that checkpoint instead of training cleanly on the fixed split.
 
+### Pair-fix retraining runs (post image/label pairing fix, see Known issues — supersedes split-fix runs above)
+
+| Config | Experiment dir | Exported model | Notes |
+|--------|---------------|----------------|-------|
+| `configs/swi_decoder-only_lr5e-5_unstacked.yaml` | `runs/grosshans_SWI_unstacked_decoder-only_lr5e-5/` | `runs/SWI/grosshans_SWI_unstacked_decoder-only_lr5e-5_model.pt` | Cold, no augmentation: trains directly on `images_unstacked` + `masks_unstacked_matched` (200 pairs). Sanity baseline. |
+| `configs/swi_full-sam_lr5e-5_unstacked_cold.yaml` | `runs/grosshans_SWI_unstacked_full-sam_lr5e-5_cold/` | `runs/SWI/grosshans_SWI_unstacked_full-sam_lr5e-5_cold_model.pt` | Cold, no augmentation, `resume_from_checkpoint: null` — genuinely fresh from pretrained `vit_b_lm`, not warm-started from any prior (pairing-bug-contaminated) checkpoint. |
+| `configs/aug_full-img_vit-b_pairfix.yaml` | `runs/grosshans_SWI_pairfix_vit_b_lm/` | `runs/SWI/grosshans_SWI_pairfix_full-sam_lr5e-5_cold_model.pt` | Combined augmentation (writes `augmented_pairfix/`) + full-SAM cold training in one job. Run this (or the standalone `augment` CLI command) first — `swi_decoder-only_lr5e-5_pairfix.yaml` depends on `augmented_pairfix/` existing. |
+| `configs/swi_decoder-only_lr5e-5_pairfix.yaml` | `runs/grosshans_SWI_pairfix_decoder-only_lr5e-5/` | `runs/SWI/grosshans_SWI_pairfix_decoder-only_lr5e-5_model.pt` | Training-only; requires `augmented_pairfix/images` + `/labels` to already exist. |
+
+All prior SWI checkpoints (including the split-fix runs above) were trained on data affected
+by the image/label pairing bug and should not be trusted or warm-started from.
+
 ## Submitting
 
 ```bash
@@ -59,6 +71,18 @@ Split-fix retraining runs (can run in parallel with each other and the above):
 ```bash
 sbatch scripts/submit_training_new_cluster.sh configs/swi_decoder-only_lr5e-5_splitfix.yaml
 sbatch scripts/submit_training_new_cluster.sh configs/swi_full-sam_lr5e-5_resume_splitfix.yaml
+```
+
+Pair-fix retraining runs (see Known issues — supersedes split-fix runs, use these instead):
+```bash
+# Cold, no augmentation, directly on the 200 corrected unstacked pairs — can run in parallel
+sbatch scripts/submit_training_new_cluster.sh configs/swi_decoder-only_lr5e-5_unstacked.yaml
+sbatch scripts/submit_training_new_cluster.sh configs/swi_full-sam_lr5e-5_unstacked_cold.yaml
+
+# Fixed augmentation + full-SAM cold training in one job — run this before the next line
+sbatch scripts/submit_training_new_cluster.sh configs/aug_full-img_vit-b_pairfix.yaml
+# Requires augmented_pairfix/ to exist (from the job above, or a standalone `augment` CLI run)
+sbatch scripts/submit_training_new_cluster.sh configs/swi_decoder-only_lr5e-5_pairfix.yaml
 ```
 
 ## Inference
@@ -100,6 +124,9 @@ sbatch scripts/submit_inference.sh \
   - **Confirmed by split-fix retraining (2026-07-04):** `swi_decoder-only_lr5e-5_splitfix.yaml` plateaued around loss ~1.06-1.07 and early-stopped after ~28 epochs (vs. the old leaky-split 0.06) — consistent with decoder-only genuinely struggling to generalize from only 16 source stacks once val is a real holdout. Not yet usable for production; treat as confirming the diagnosis, not as a working model.
   - `swi_full-sam_lr5e-5_resume_splitfix.yaml` ran the full 100 epochs, best epoch 93, best val loss ~0.0376 — a much better generalization signal, though still confounded by warm-starting from a checkpoint (`grosshans_SWI_aug6_vit_b_lm_B`) trained under the old leaky split. Exported to `runs/SWI/grosshans_SWI_splitfix_full-sam_lr5e-5_model.pt`.
 - **Train/inference normalization mismatch (fixed in `69698df`).** `PercentileNormalizer` is now shared between training (`training.py`) and inference (`run_inference.py` / `run_inference_hcs.py` via `inference_utils.segment_image`), applied by default. Override with `--no-normalize` / `--normalize-lower-percentile` / `--normalize-upper-percentile` if a model was trained with different settings.
+- **Image/label pairing bug (confirmed 2026-07-04, one-off fix applied, general fix deferred).** `get_image_paths` sorts each directory independently with plain `sorted()`, and both `run_augmentation` and `prepare_data_splits` pair images to labels purely by list position. `images_unstacked` mixes two naming conventions across stacks (`stack_BF_min_ome_s{1,2,3,5,8}_sub20_sliceNNNN.tif` vs. `stack_BF_mip_min_s{30-34}_sub20_sliceNNNN.tif`) while `masks_unstacked` uses one uniform scheme (`mask_s{N}_sliceNNNN.tif`), so lexicographic sort grouped them differently and positional pairing matched the wrong stack's mask to **160/200 images (80%)** — only stacks 1 and 2 (sorted first in both directories) were correct. This is more severe than the val-split leakage above: most training supervision was wrong-stack masks, not just a bad validation signal, and explains why only one C. elegans developmental stage segmented correctly while the others (larval stages) failed.
+  - **Fix applied for the current run:** `scripts/fix_unstacked_mask_pairing.py` matches images↔masks by an extracted `(stack, slice)` key and writes renamed copies to `masks_unstacked_matched` (verified 0/200 mismatches). New pair-fix configs (see Training runs above) use this corrected directory and fresh experiment names, since all prior checkpoints are downstream of this bug.
+  - **General fix (Fix A) deferred to a future release:** replace positional pairing with explicit key-based matching in `run_augmentation`/`prepare_data_splits` so this bug class can't recur silently for other datasets. Not implemented now, since a fully general matching strategy would need testing against filename conventions this project hasn't encountered yet. Revisit if the symptom recurs on another dataset.
 
 ## Key fixes on branch `swi-training-fixes`
 
