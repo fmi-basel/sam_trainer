@@ -21,7 +21,14 @@ All paths are relative to the project root unless stated otherwise.
 |--------|---------------|----------------|-------|
 | `configs/swi_decoder-only_lr5e-5.yaml` | `runs/grosshans_SWI_aug6_decoder-only_lr5e-5/` | `runs/SWI/grosshans_SWI_aug6_decoder-only_lr5e-5_model.pt` | Fresh run, 200 epochs, fixed sampler |
 
-### Full SAM fine-tune (mask decoder, AMG inference)
+### Full SAM fine-tune (mask decoder + jointly-trained AIS decoder)
+
+`training.py` always passes `with_segmentation_decoder=True` to `train_sam` and to the
+`export_custom_sam_model` export call, regardless of training mode — so full-SAM training
+here also jointly trains and exports the AIS instance-segmentation decoder, same as
+decoder-only training. Verified directly: `grosshans_SWI_splitfix_full-sam_lr5e-5_model.pt`
+contains `['model_state', 'decoder_state']`. Use the default AIS mode (no `--use-amg`)
+unless you specifically want AMG.
 
 | Config | Warm-start checkpoint | Experiment dir | Exported model |
 |--------|-----------------------|---------------|----------------|
@@ -71,14 +78,20 @@ Adjust decoder thresholds if results are over/under-segmented (defaults 0.5):
     --center-dist-thresh 0.3 --boundary-dist-thresh 0.3 --foreground-thresh 0.4
 ```
 
-**Full-SAM model (AMG)** — same script, but you must pass `--use-amg` explicitly: `get_predictor_and_segmenter` raises `RuntimeError` if `segmentation_mode="ais"` is requested (the CLI default) against a checkpoint with no `decoder_state`. It is not auto-detected unless `segmentation_mode` is left as `None`/`"auto"`, which the CLI never does.
+**Full-SAM model (AIS by default)** — same script, no `--use-amg` needed: these checkpoints
+contain a `decoder_state` (see above), so the CLI default (`segmentation_mode="ais"`) works
+directly. Only pass `--use-amg` if you specifically want AMG instead — note
+`get_predictor_and_segmenter` raises `RuntimeError` for `segmentation_mode="ais"` against a
+checkpoint that genuinely has no `decoder_state` (e.g. a full-SAM run from before
+`with_segmentation_decoder=True` was added), so this only works because these particular
+checkpoints do have one.
 
 ```bash
 sbatch scripts/submit_inference.sh \
     runs/SWI/grosshans_SWI_splitfix_full-sam_lr5e-5_model.pt \
     /tachyon/scratch/gmicro_ipa/ggrossha/ancneagu/swi_annotations/test_data \
     /tachyon/scratch/gmicro_ipa/ggrossha/ancneagu/swi_annotations/test_inference_splitfix \
-    --use-amg --pattern "*.tiff"
+    --pattern "*.tiff"
 ```
 
 ## Known issues
