@@ -471,6 +471,20 @@ def run_training(config: TrainingConfig, output_dir: Path) -> dict[str, Path]:
             with_segmentation_decoder=True,
         )
 
+    # Guard against regressing to a bloated, non-portable export (this happened once
+    # before, see commit eeff18e): the exported file must contain only plain tensors
+    # under model_state/decoder_state, never optimizer/scheduler state or dataset
+    # objects, so it can be loaded with stock micro_sam APIs in environments that
+    # don't have sam_trainer installed.
+    exported_keys = set(torch.load(export_path, map_location="cpu", weights_only=False))
+    unexpected_keys = exported_keys - {"model_state", "decoder_state"}
+    if unexpected_keys:
+        raise RuntimeError(
+            f"Exported model at {export_path} has unexpected top-level keys "
+            f"{sorted(unexpected_keys)} beyond {{'model_state', 'decoder_state'}}; "
+            "it would not load with stock micro_sam APIs outside this environment."
+        )
+
     logger.info("Training complete!")
 
     return {
