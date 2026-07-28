@@ -51,6 +51,7 @@ def process_well(
     normalize: bool = True,
     normalize_lower_percentile: float = 1.0,
     normalize_upper_percentile: float = 99.5,
+    invert: bool = False,
 ) -> None:
     """Process a single well in an HCS plate.
 
@@ -95,6 +96,7 @@ def process_well(
             normalize=normalize,
             normalize_lower_percentile=normalize_lower_percentile,
             normalize_upper_percentile=normalize_upper_percentile,
+            invert=invert,
         )
 
         # NGIO label writer expects a 2D label patch for this ROI.
@@ -118,6 +120,7 @@ def process_wells(
     normalize: bool = True,
     normalize_lower_percentile: float = 1.0,
     normalize_upper_percentile: float = 99.5,
+    invert: bool = False,
 ) -> None:
     """Process all wells in an HCS plate.
 
@@ -154,6 +157,7 @@ def process_wells(
                 normalize=normalize,
                 normalize_lower_percentile=normalize_lower_percentile,
                 normalize_upper_percentile=normalize_upper_percentile,
+                invert=invert,
             )
 
         except Exception as e:
@@ -173,6 +177,7 @@ def process_single_plate(
     normalize: bool = True,
     normalize_lower_percentile: float = 1.0,
     normalize_upper_percentile: float = 99.5,
+    invert: bool = False,
 ) -> None:
     """Process a single HCS plate.
 
@@ -207,6 +212,7 @@ def process_single_plate(
             normalize=normalize,
             normalize_lower_percentile=normalize_lower_percentile,
             normalize_upper_percentile=normalize_upper_percentile,
+            invert=invert,
         )
         console.print(f"[green]✓[/green] Plate complete: {plate_path}")
     except Exception as e:
@@ -226,6 +232,7 @@ def process_hcs_plates(
     normalize: bool = True,
     normalize_lower_percentile: float = 1.0,
     normalize_upper_percentile: float = 99.5,
+    invert: bool = False,
 ) -> None:
     """Process either a single plate or all plates in a directory.
 
@@ -277,6 +284,7 @@ def process_hcs_plates(
             normalize=normalize,
             normalize_lower_percentile=normalize_lower_percentile,
             normalize_upper_percentile=normalize_upper_percentile,
+            invert=invert,
         )
     else:
         # Parent directory - find all .zarr plates
@@ -304,6 +312,7 @@ def process_hcs_plates(
                 normalize=normalize,
                 normalize_lower_percentile=normalize_lower_percentile,
                 normalize_upper_percentile=normalize_upper_percentile,
+                invert=invert,
             )
 
 
@@ -374,6 +383,12 @@ def main(
         "--normalize-upper-percentile",
         help="Upper percentile for intensity clipping (must match training config)",
     ),
+    invert: bool = typer.Option(
+        False,
+        "--invert/--no-invert",
+        help="Invert intensities after normalization (for dark-foreground images, e.g. "
+        "brightfield min-intensity projections). Must match training config.",
+    ),
     channel: Optional[str] = typer.Option(
         None,
         "--channel",
@@ -441,6 +456,7 @@ def main(
         normalize=normalize,
         normalize_lower_percentile=normalize_lower_percentile,
         normalize_upper_percentile=normalize_upper_percentile,
+        invert=invert,
     )
 
     console.print("\n[bold green]✓ All inference complete![/bold green]")

@@ -151,6 +151,11 @@ class TrainingConfig(BaseModel):
         le=100,
         description="Upper percentile for intensity clipping",
     )
+    invert_inputs: bool = Field(
+        default=False,
+        description="Invert intensities after normalization (for dark-foreground images, "
+        "e.g. brightfield min-intensity projections)",
+    )
     use_min_instance_sampler: bool = Field(
         default=True,
         description="Use a MinInstanceSampler to ensure patches contain foreground instances",

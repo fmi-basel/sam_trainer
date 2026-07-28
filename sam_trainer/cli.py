@@ -159,6 +159,11 @@ def config(
             "Upper percentile for clipping", type=float, default=99.5
         )
 
+    invert_inputs = typer.confirm(
+        "Invert intensities after normalization (dark-foreground/brightfield images)?",
+        default=False,
+    )
+
     use_min_instance_sampler = typer.confirm(
         "Use foreground-aware sampling (MinInstanceSampler)?", default=True
     )
@@ -198,6 +203,7 @@ def config(
         normalize_inputs=normalize_inputs,
         normalize_lower_percentile=lower_pct,
         normalize_upper_percentile=upper_pct,
+        invert_inputs=invert_inputs,
         use_min_instance_sampler=use_min_instance_sampler,
         min_instances_per_patch=min_instances_per_patch,
         min_instance_size=min_instance_size,

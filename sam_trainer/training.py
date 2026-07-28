@@ -19,7 +19,7 @@ from micro_sam.util import export_custom_sam_model
 from torch_em.data import MinInstanceSampler
 
 from sam_trainer.config import TrainingConfig
-from sam_trainer.io import get_image_paths
+from sam_trainer.io import get_image_paths, read_image
 from sam_trainer.utils.normalization import PercentileNormalizer
 from sam_trainer.visualization import (
     create_predictor_and_segmenter,
@@ -111,12 +111,13 @@ def _build_raw_transform(config: TrainingConfig):
     lower = config.normalize_lower_percentile
     upper = config.normalize_upper_percentile
     logger.info(
-        "Applying percentile normalization (lower=%.2f, upper=%.2f)",
+        "Applying percentile normalization (lower=%.2f, upper=%.2f, invert=%s)",
         lower,
         upper,
+        config.invert_inputs,
     )
 
-    return PercentileNormalizer(lower, upper)
+    return PercentileNormalizer(lower, upper, invert=config.invert_inputs)
 
 
 _AUG_SUFFIX_RE = re.compile(r"_(?:aug\d+|orig)$")
@@ -169,6 +170,19 @@ def prepare_data_splits(
 
     if len(image_paths) == 0:
         raise ValueError(f"No images found in {images_dir}")
+
+    # Drop pairs whose label has no foreground at all. A patch with zero
+    # foreground pixels can never satisfy MinInstanceSampler(min_instances=1),
+    # which crashes training with "No foreground objects were found." when
+    # patch_shape equals the full image shape (no room to crop elsewhere).
+    non_empty = [i for i, p in enumerate(label_paths) if read_image(p).max() > 0]
+    if len(non_empty) < len(label_paths):
+        logger.warning(
+            f"Dropping {len(label_paths) - len(non_empty)} image/label pairs "
+            "with empty label masks (no foreground)"
+        )
+        image_paths = [image_paths[i] for i in non_empty]
+        label_paths = [label_paths[i] for i in non_empty]
 
     n_total = len(image_paths)
     n_val_target = max(1, int(n_total * val_split))

@@ -197,6 +197,7 @@ def segment_image(
     normalize: bool = True,
     normalize_lower_percentile: float = 1.0,
     normalize_upper_percentile: float = 99.5,
+    invert: bool = False,
 ) -> np.ndarray:
     """Run instance segmentation on a single image.
 
@@ -215,6 +216,8 @@ def segment_image(
             different input distribution than it was trained on.
         normalize_lower_percentile: Lower percentile for intensity clipping.
         normalize_upper_percentile: Upper percentile for intensity clipping.
+        invert: Invert intensities after normalization. Must match training settings
+            (e.g. for dark-foreground brightfield images).
 
     Returns:
         Instance segmentation masks as 2D numpy array with integer labels
@@ -223,9 +226,9 @@ def segment_image(
     image = _to_2d(image, channel_index=channel_index)
 
     if normalize:
-        image = PercentileNormalizer(normalize_lower_percentile, normalize_upper_percentile)(
-            image
-        )
+        image = PercentileNormalizer(
+            normalize_lower_percentile, normalize_upper_percentile, invert=invert
+        )(image)
 
     if isinstance(segmenter, InstanceSegmentationWithDecoder) and not use_amg:
         # generate() returns a 2D integer label array directly (output_mode="instance_segmentation")

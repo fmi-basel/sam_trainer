@@ -109,6 +109,7 @@ def process_zarr_image(
     normalize: bool = True,
     normalize_lower_percentile: float = 1.0,
     normalize_upper_percentile: float = 99.5,
+    invert: bool = False,
 ) -> None:
     """Process a single OME-Zarr image and write labels back to zarr.
 
@@ -121,6 +122,7 @@ def process_zarr_image(
         generate_kwargs: Optional decoder parameters
         channel: Channel to segment. Integer index string (e.g. '0') or omero channel
             name (e.g. 'BF'). Default: first channel.
+        invert: Invert intensities after normalization. Must match training settings.
     """
     console.print(f"[cyan]Processing OME-Zarr:[/cyan] {zarr_path.name}")
 
@@ -159,6 +161,7 @@ def process_zarr_image(
                 normalize=normalize,
                 normalize_lower_percentile=normalize_lower_percentile,
                 normalize_upper_percentile=normalize_upper_percentile,
+                invert=invert,
             )
 
             # NGIO label writer expects a 2D label patch for this ROI.
@@ -196,6 +199,7 @@ def process_tiff_images(
     normalize: bool = True,
     normalize_lower_percentile: float = 1.0,
     normalize_upper_percentile: float = 99.5,
+    invert: bool = False,
 ) -> None:
     """Process TIFF images and save masks as separate TIFF files.
 
@@ -280,6 +284,7 @@ def process_tiff_images(
                             normalize=normalize,
                             normalize_lower_percentile=normalize_lower_percentile,
                             normalize_upper_percentile=normalize_upper_percentile,
+                            invert=invert,
                         )
                         m, removed = postprocess_masks(
                             m,
@@ -301,6 +306,7 @@ def process_tiff_images(
                         normalize=normalize,
                         normalize_lower_percentile=normalize_lower_percentile,
                         normalize_upper_percentile=normalize_upper_percentile,
+                        invert=invert,
                     )
                     masks, removed = postprocess_masks(
                         masks,
@@ -431,6 +437,12 @@ def main(
         "--normalize-upper-percentile",
         help="Upper percentile for intensity clipping (must match training config)",
     ),
+    invert: bool = typer.Option(
+        False,
+        "--invert/--no-invert",
+        help="Invert intensities after normalization (for dark-foreground images, e.g. "
+        "brightfield min-intensity projections). Must match training config.",
+    ),
     verbose: int = typer.Option(
         0, "--verbose", "-v", count=True, help="Increase logging verbosity"
     ),
@@ -550,6 +562,7 @@ def main(
             normalize=normalize,
             normalize_lower_percentile=normalize_lower_percentile,
             normalize_upper_percentile=normalize_upper_percentile,
+            invert=invert,
         )
         console.print("\n[bold green]✓ Inference complete![/bold green]")
 
@@ -574,6 +587,7 @@ def main(
                     normalize=normalize,
                     normalize_lower_percentile=normalize_lower_percentile,
                     normalize_upper_percentile=normalize_upper_percentile,
+                    invert=invert,
                 )
             console.print("\n[bold green]✓ All inference complete![/bold green]")
 
@@ -612,6 +626,7 @@ def main(
                 normalize=normalize,
                 normalize_lower_percentile=normalize_lower_percentile,
                 normalize_upper_percentile=normalize_upper_percentile,
+                invert=invert,
             )
             console.print("\n[bold green]✓ Inference complete![/bold green]")
             console.print(f"Results saved to: {output_dir}")

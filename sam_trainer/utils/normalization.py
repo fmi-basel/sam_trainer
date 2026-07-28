@@ -11,9 +11,10 @@ import numpy as np
 class PercentileNormalizer:
     """Rescale intensities to uint8 using percentiles computed over non-zero pixels."""
 
-    def __init__(self, lower: float, upper: float):
+    def __init__(self, lower: float, upper: float, invert: bool = False):
         self.lower = lower
         self.upper = upper
+        self.invert = invert
 
     def __call__(self, raw):
         arr = np.asarray(raw, dtype=np.float32)
@@ -35,4 +36,8 @@ class PercentileNormalizer:
         arr = np.clip(arr, lo, hi)
         arr = (arr - lo) / (hi - lo)
         arr = (arr * 255.0).astype(np.uint8)
+        # Invert after normalization (not before percentile clipping), so the
+        # zero-padding mask above still refers to raw background, not foreground.
+        if self.invert:
+            arr = 255 - arr
         return arr
