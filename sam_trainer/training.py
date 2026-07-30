@@ -268,9 +268,14 @@ def run_training(config: TrainingConfig, output_dir: Path) -> dict[str, Path]:
     else:
         # micro_sam's default_sam_dataset injects MinInstanceSampler(2, min_size=25) when sampler=None.
         # Pass a minimal sampler to suppress that behaviour while still filtering empty patches.
-        train_sampler = MinInstanceSampler(1, min_size=1)
-        val_sampler = MinInstanceSampler(1, min_size=1)
-        logger.info("Using permissive MinInstanceSampler (min_instances=1, min_size=1)")
+        # min_num_instances=2, not 1: MinInstanceSampler counts *all* distinct label values,
+        # including background (0), so min_num_instances=1 accepts any patch (even all-background
+        # or all-foreground-with-no-background ones) and is a no-op filter. 2 is the minimum that
+        # actually requires background + >=1 real instance in the patch, which micro_sam's own
+        # downstream prompt code (np.unique(gt)[1:], assuming index 0 is background) depends on.
+        train_sampler = MinInstanceSampler(2, min_size=1)
+        val_sampler = MinInstanceSampler(2, min_size=1)
+        logger.info("Using permissive MinInstanceSampler (min_instances=2, min_size=1)")
 
     loader_kwargs = {
         "batch_size": config.batch_size,

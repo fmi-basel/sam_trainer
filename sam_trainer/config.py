@@ -171,7 +171,9 @@ class TrainingConfig(BaseModel):
     min_instances_per_patch: int = Field(
         default=2,
         ge=1,
-        description="Minimum number of distinct instances required per sampled patch",
+        description="Minimum number of distinct label values required per sampled patch, "
+        "INCLUDING background (0). Must be >=2 to actually guarantee >=1 real foreground "
+        "instance; 1 is a no-op filter that accepts all-background or all-foreground patches.",
     )
     min_instance_size: int = Field(
         default=25,

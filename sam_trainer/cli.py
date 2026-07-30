@@ -289,6 +289,7 @@ def train(
             )
         except Exception as e:
             console.print(f"[bold red]Error during augmentation:[/bold red] {e}")
+            console.print_exception()
             raise typer.Exit(1)
     else:
         console.print("[dim]Skipping augmentation[/dim]")
@@ -301,6 +302,7 @@ def train(
         console.print(f"Exported model: {results['exported_model']}")
     except Exception as e:
         console.print(f"[bold red]Error during training:[/bold red] {e}")
+        console.print_exception()
         raise typer.Exit(1)
 
 
@@ -359,6 +361,7 @@ def augment(
         )
     except Exception as e:
         console.print(f"[bold red]Error:[/bold red] {e}")
+        console.print_exception()
         raise typer.Exit(1)
 
 
@@ -407,6 +410,7 @@ def embeddings(
         results = run_embeddings_extraction(config)
     except Exception as e:
         console.print(f"[bold red]Error during embedding extraction:[/bold red] {e}")
+        console.print_exception()
         raise typer.Exit(1)
 
     console.print("\n[bold green]✓ Embedding extraction complete![/bold green]")
