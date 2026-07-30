@@ -46,8 +46,16 @@ class AugmentationConfig(BaseModel):
     gaussian_blur_prob: float = Field(
         default=0.3, ge=0, le=1, description="Probability of applying Gaussian blur"
     )
+    gaussian_blur_limit: tuple[int, int] = Field(
+        default=(3, 11),
+        description="Min/max Gaussian blur kernel size (both must be odd)",
+    )
     gaussian_noise_prob: float = Field(
         default=0.3, ge=0, le=1, description="Probability of adding Gaussian noise"
+    )
+    noise_multiplier_range: tuple[float, float] = Field(
+        default=(0.95, 1.05),
+        description="Min/max multiplicative noise factor applied per-pixel",
     )
     brightness_contrast: bool = Field(
         default=True, description="Apply random brightness/contrast adjustments"
