@@ -32,11 +32,22 @@ Example:
 
 import json
 import sys
+import warnings
 from pathlib import Path
 
 import torch
 from loguru import logger
 from micro_sam.util import export_custom_sam_model
+
+# Legacy checkpoints pickle the full torch_em train/val datasets in their `init` dict.
+# Unpickling re-opens each item's raw/label path (baked in as an HPC-absolute path at
+# save time) purely to populate in-memory handles; on a machine without that path it
+# warns and sets the handle to None instead of raising. Harmless for export, since we
+# only ever read model_state/decoder_state, but a dataset with thousands of augmented
+# slices produces one warning per item. Suppressed here rather than at the call site
+# because export_custom_sam_model triggers a second, independent torch.load internally.
+warnings.filterwarnings("ignore", message=r"SegmentationDataset could not be deserialized.*", category=UserWarning)
+warnings.filterwarnings("ignore", message=r"RawDataset could not be deserialized.*", category=UserWarning)
 
 PROVENANCE_KEYS = (
     "iteration",
