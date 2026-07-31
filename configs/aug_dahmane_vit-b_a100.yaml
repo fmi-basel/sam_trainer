@@ -35,9 +35,9 @@ training:
   normalize_lower_percentile: 1.0
   normalize_upper_percentile: 99.5
   invert_inputs: false
-  use_min_instance_sampler: false
+  use_min_instance_sampler: true
   min_instances_per_patch: 2
-  min_instance_size: 1
+  min_instance_size: 100
   save_validation_predictions_frequency: 10
   checkpoint_name: "dahmane_christian_full-sam_lr5e-5_cold_ckpt"
   resume_from_checkpoint: null

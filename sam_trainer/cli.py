@@ -18,7 +18,7 @@ from sam_trainer.config import (
     TrainingConfig,
 )
 from sam_trainer.embeddings import run_embeddings_extraction
-from sam_trainer.training import run_training
+from sam_trainer.training import export_best_checkpoint, run_training
 
 app = typer.Typer(
     name="sam-trainer",
@@ -303,6 +303,19 @@ def train(
     except Exception as e:
         console.print(f"[bold red]Error during training:[/bold red] {e}")
         console.print_exception()
+        # Best-effort recovery: training crashed, but if it got far enough to write
+        # a checkpoint, export it anyway so the run isn't a total loss and doesn't
+        # require a separate manual re-export step to become usable for inference.
+        try:
+            export_path = export_best_checkpoint(config.training, experiment_dir)
+            console.print(
+                f"[yellow]Training did not finish, but exported the best available "
+                f"checkpoint anyway:[/yellow] {export_path}"
+            )
+        except Exception as export_error:
+            console.print(
+                f"[dim]Could not export a checkpoint after the failure: {export_error}[/dim]"
+            )
         raise typer.Exit(1)
 
 

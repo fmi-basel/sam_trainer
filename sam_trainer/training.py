@@ -252,18 +252,19 @@ def run_training(config: TrainingConfig, output_dir: Path) -> dict[str, Path]:
 
     raw_transform = _build_raw_transform(config)
     if config.use_min_instance_sampler:
+        effective_min_size = config.min_instance_size
         train_sampler = MinInstanceSampler(
             config.min_instances_per_patch,
-            min_size=config.min_instance_size,
+            min_size=effective_min_size,
         )
         val_sampler = MinInstanceSampler(
             config.min_instances_per_patch,
-            min_size=config.min_instance_size,
+            min_size=effective_min_size,
         )
         logger.info(
             "Using MinInstanceSampler (min_instances=%s, min_size=%s) for both train and validation",
             config.min_instances_per_patch,
-            config.min_instance_size,
+            effective_min_size,
         )
     else:
         # micro_sam's default_sam_dataset injects MinInstanceSampler(2, min_size=25) when sampler=None.
@@ -273,9 +274,16 @@ def run_training(config: TrainingConfig, output_dir: Path) -> dict[str, Path]:
         # or all-foreground-with-no-background ones) and is a no-op filter. 2 is the minimum that
         # actually requires background + >=1 real instance in the patch, which micro_sam's own
         # downstream prompt code (np.unique(gt)[1:], assuming index 0 is background) depends on.
-        train_sampler = MinInstanceSampler(2, min_size=1)
-        val_sampler = MinInstanceSampler(2, min_size=1)
-        logger.info("Using permissive MinInstanceSampler (min_instances=2, min_size=1)")
+        # min_size=25 (not 1) to match default_sam_dataset's own default for the same argument
+        # (see below) - the sampler's threshold and the decoder label transform's threshold must
+        # agree, otherwise a patch can pass the sampler on a <25px foreground sliver that then
+        # gets dropped by the label transform, landing back at zero foreground pixels.
+        effective_min_size = 25
+        train_sampler = MinInstanceSampler(2, min_size=effective_min_size)
+        val_sampler = MinInstanceSampler(2, min_size=effective_min_size)
+        logger.info(
+            "Using permissive MinInstanceSampler (min_instances=2, min_size=%s)", effective_min_size
+        )
 
     loader_kwargs = {
         "batch_size": config.batch_size,
@@ -285,6 +293,11 @@ def run_training(config: TrainingConfig, output_dir: Path) -> dict[str, Path]:
         "n_samples": config.n_samples,
         "num_workers": config.num_workers,
         "raw_transform": raw_transform,
+        # default_sam_dataset uses this to build its own label transform (e.g.
+        # PerObjectDistanceTransform for full-SAM decoder training), independently of the
+        # sampler above. Must match the sampler's min_size or a patch that passes the sampler
+        # can still end up with zero foreground after the label transform filters it out.
+        "min_size": effective_min_size,
     }
 
     # Check mode and create appropriate loaders
@@ -457,7 +470,24 @@ def run_training(config: TrainingConfig, output_dir: Path) -> dict[str, Path]:
         except Exception as e:
             logger.warning(f"Failed to save final validation predictions: {e}")
 
-    # Export model
+    export_path = export_best_checkpoint(config, output_dir)
+    logger.info("Training complete!")
+
+    return {
+        "checkpoint": checkpoint_dir / "best.pt",
+        "exported_model": export_path,
+        "checkpoint_dir": checkpoint_dir,
+    }
+
+
+def export_best_checkpoint(config: TrainingConfig, output_dir: Path) -> Path:
+    """Export the best (or latest available) checkpoint to a lean, portable model file.
+
+    Safe to call even if training did not finish (e.g. crashed mid-run) as long as
+    at least one checkpoint was written - this is what makes crashed runs still
+    recoverable without a separate manual re-export step.
+    """
+    checkpoint_dir = output_dir / "checkpoints" / config.checkpoint_name
     best_checkpoint = checkpoint_dir / "best.pt"
     if not best_checkpoint.exists():
         logger.warning(f"Best checkpoint not found at {best_checkpoint}")
@@ -504,10 +534,4 @@ def run_training(config: TrainingConfig, output_dir: Path) -> dict[str, Path]:
             "it would not load with stock micro_sam APIs outside this environment."
         )
 
-    logger.info("Training complete!")
-
-    return {
-        "checkpoint": best_checkpoint,
-        "exported_model": export_path,
-        "checkpoint_dir": checkpoint_dir,
-    }
+    return export_path
