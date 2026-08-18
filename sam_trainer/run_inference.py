@@ -21,7 +21,7 @@ Usage:
 """
 
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Tuple
 
 import numpy as np
 import tifffile
@@ -110,6 +110,8 @@ def process_zarr_image(
     normalize_lower_percentile: float = 1.0,
     normalize_upper_percentile: float = 99.5,
     invert: bool = False,
+    tile_shape: Optional[Tuple[int, int]] = None,
+    halo: Optional[Tuple[int, int]] = None,
 ) -> None:
     """Process a single OME-Zarr image and write labels back to zarr.
 
@@ -123,6 +125,12 @@ def process_zarr_image(
         channel: Channel to segment. Integer index string (e.g. '0') or omero channel
             name (e.g. 'BF'). Default: first channel.
         invert: Invert intensities after normalization. Must match training settings.
+        tile_shape: Tile shape for large images. `SegmentationIterator`'s default ROI is
+            the *entire* image as a single patch, so without this, images much larger than
+            the training patch size get downscaled by SAM before segmentation (see
+            run_inference.py's TIFF path for the same issue). `segmenter` must have been
+            built with `is_tiled=True` (see load_model_with_decoder) for this to work.
+        halo: Overlap for stitching tiles when `tile_shape` is set.
     """
     console.print(f"[cyan]Processing OME-Zarr:[/cyan] {zarr_path.name}")
 
@@ -156,6 +164,8 @@ def process_zarr_image(
                 predictor,
                 segmenter,
                 use_amg=use_amg,
+                tile_shape=tile_shape,
+                halo=halo,
                 generate_kwargs=generate_kwargs,
                 channel_index=channel_index,
                 normalize=normalize,
@@ -280,6 +290,8 @@ def process_tiff_images(
                             predictor,
                             segmenter,
                             use_amg=use_amg,
+                            tile_shape=tile_shape,
+                            halo=halo,
                             generate_kwargs=generate_kwargs,
                             normalize=normalize,
                             normalize_lower_percentile=normalize_lower_percentile,
@@ -302,6 +314,8 @@ def process_tiff_images(
                         predictor,
                         segmenter,
                         use_amg=use_amg,
+                        tile_shape=tile_shape,
+                        halo=halo,
                         generate_kwargs=generate_kwargs,
                         normalize=normalize,
                         normalize_lower_percentile=normalize_lower_percentile,
@@ -374,12 +388,15 @@ def main(
     tile_shape: Optional[str] = typer.Option(
         None,
         "--tile-shape",
-        help="Tile shape for large images (e.g., '512,512'). For TIFF only.",
+        help="Tile shape for large images (e.g., '1024,1024'). Applies to both TIFF and "
+        "OME-Zarr input. Strongly recommended whenever the image is much larger than the "
+        "training patch_shape — without it, AIS/decoder inference silently downscales the "
+        "whole image to SAM's 1024px encoder input before segmenting.",
     ),
     halo: Optional[str] = typer.Option(
         None,
         "--halo",
-        help="Overlap for stitching tiles (e.g., '64,64'). Only used with --tile-shape for TIFF.",
+        help="Overlap for stitching tiles (e.g., '128,128'). Only used with --tile-shape.",
     ),
     max_instances: Optional[int] = typer.Option(
         None,
@@ -514,6 +531,8 @@ def main(
                     "[bold red]Error:[/bold red] halo must be two integers separated by comma (e.g., '64,64')"
                 )
                 raise typer.Exit(1)
+        else:
+            halo_tuple = (0, 0)
 
     # Load model
     if model is not None:
@@ -540,6 +559,7 @@ def main(
             device=device,
             model_path=str(model) if model is not None else None,
             use_amg=use_amg,
+            is_tiled=tile_shape_tuple is not None,
         )
         console.print("[green]✓[/green] Model loaded successfully")
     except Exception as e:
@@ -563,6 +583,8 @@ def main(
             normalize_lower_percentile=normalize_lower_percentile,
             normalize_upper_percentile=normalize_upper_percentile,
             invert=invert,
+            tile_shape=tile_shape_tuple,
+            halo=halo_tuple,
         )
         console.print("\n[bold green]✓ Inference complete![/bold green]")
 
@@ -588,6 +610,8 @@ def main(
                     normalize_lower_percentile=normalize_lower_percentile,
                     normalize_upper_percentile=normalize_upper_percentile,
                     invert=invert,
+                    tile_shape=tile_shape_tuple,
+                    halo=halo_tuple,
                 )
             console.print("\n[bold green]✓ All inference complete![/bold green]")
 

@@ -26,6 +26,7 @@ def load_model_with_decoder(
     device: str,
     model_path: Optional[str] = None,
     use_amg: bool = False,
+    is_tiled: bool = False,
     **amg_kwargs,
 ) -> Tuple:
     """Load an exported model with either decoder or AMG segmentation.
@@ -36,6 +37,11 @@ def load_model_with_decoder(
         model_path: Path to a custom model checkpoint (.pt file). If None, the
             pre-trained micro-SAM model for `model_type` is downloaded/used from cache.
         use_amg: If True, use AMG instead of decoder-based segmentation
+        is_tiled: If True, build a segmenter that supports tiled image embeddings
+            (`TiledInstanceSegmentationWithDecoder`/`TiledAutomaticMaskGenerator`) instead
+            of the whole-image one. Required for tiled inference — the whole-image segmenter
+            can't be tiled after the fact by passing `tile_shape` to `initialize()`. Must be
+            set whenever a `tile_shape` will be passed to `segment_image()`.
         **amg_kwargs: Additional kwargs for AMG (pred_iou_thresh, stability_score_thresh, etc.)
 
     Returns:
@@ -45,7 +51,7 @@ def load_model_with_decoder(
         Exception: If model loading fails
     """
     mode = "AMG" if use_amg else "AIS (decoder-based)"
-    logger.info(f"Loading model with {mode} segmentation")
+    logger.info(f"Loading model with {mode} segmentation" + (" (tiled)" if is_tiled else ""))
     segmentation_mode = "amg" if use_amg else "ais"
 
     if model_path is not None:
@@ -69,6 +75,7 @@ def load_model_with_decoder(
                 state=state,
                 device=device,
                 segmentation_mode=segmentation_mode,
+                is_tiled=is_tiled,
                 **amg_kwargs,
             )
             return predictor, segmenter
@@ -78,6 +85,7 @@ def load_model_with_decoder(
         checkpoint=model_path,
         device=device,
         segmentation_mode=segmentation_mode,
+        is_tiled=is_tiled,
         **amg_kwargs,
     )
     return predictor, segmenter
@@ -232,7 +240,16 @@ def segment_image(
 
     if isinstance(segmenter, InstanceSegmentationWithDecoder) and not use_amg:
         # generate() returns a 2D integer label array directly (output_mode="instance_segmentation")
-        segmenter.initialize(image)
+        # Without tile_shape, initialize() feeds the whole image through SAM's encoder, which
+        # resizes the longest side to 1024px — for images much larger than the training patch
+        # size, this shrinks objects far below the scale the decoder was trained on. Tiling
+        # keeps each tile near the encoder's native resolution instead. Only works if `segmenter`
+        # was built with `is_tiled=True` (see load_model_with_decoder) — the whole-image
+        # InstanceSegmentationWithDecoder.initialize() doesn't accept tile_shape/halo at all.
+        if tile_shape is not None:
+            segmenter.initialize(image, tile_shape=tile_shape, halo=halo or (0, 0))
+        else:
+            segmenter.initialize(image)
         masks = segmenter.generate(**generate_kwargs)
     else:
         # AMG-based segmentation: use automatic_instance_segmentation

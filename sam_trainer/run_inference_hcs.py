@@ -13,7 +13,7 @@ Usage:
 """
 
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Tuple
 
 import numpy as np
 import torch
@@ -52,6 +52,8 @@ def process_well(
     normalize_lower_percentile: float = 1.0,
     normalize_upper_percentile: float = 99.5,
     invert: bool = False,
+    tile_shape: Optional[Tuple[int, int]] = None,
+    halo: Optional[Tuple[int, int]] = None,
 ) -> None:
     """Process a single well in an HCS plate.
 
@@ -64,6 +66,11 @@ def process_well(
         generate_kwargs: Optional decoder parameters
         channel: Channel to use. Integer index string (e.g. '0') or omero channel
             name (e.g. 'BF'). Default: first channel.
+        tile_shape: Tile shape for large well/field images. `SegmentationIterator`'s default
+            ROI is the *entire* image as a single patch, so without this, wells much larger
+            than the training patch_shape get downscaled by SAM before segmentation.
+            `segmenter` must have been built with `is_tiled=True` for this to work.
+        halo: Overlap for stitching tiles when `tile_shape` is set.
     """
     # Get image data
     image_data = well_image_container.get_image()
@@ -91,6 +98,8 @@ def process_well(
             predictor,
             segmenter,
             use_amg=use_amg,
+            tile_shape=tile_shape,
+            halo=halo,
             generate_kwargs=generate_kwargs,
             channel_index=channel_index,
             normalize=normalize,
@@ -121,6 +130,8 @@ def process_wells(
     normalize_lower_percentile: float = 1.0,
     normalize_upper_percentile: float = 99.5,
     invert: bool = False,
+    tile_shape: Optional[Tuple[int, int]] = None,
+    halo: Optional[Tuple[int, int]] = None,
 ) -> None:
     """Process all wells in an HCS plate.
 
@@ -132,6 +143,8 @@ def process_wells(
         use_amg: Whether using AMG mode
         generate_kwargs: Optional decoder parameters
         channel: Channel to use. Integer index string or omero channel name. Default: first.
+        tile_shape: Tile shape for large well/field images (see process_well).
+        halo: Overlap for stitching tiles when `tile_shape` is set.
     """
     wells = list(plate.get_wells().keys())
     console.print(f"[cyan]Found {len(wells)} wells to process[/cyan]")
@@ -158,6 +171,8 @@ def process_wells(
                 normalize_lower_percentile=normalize_lower_percentile,
                 normalize_upper_percentile=normalize_upper_percentile,
                 invert=invert,
+                tile_shape=tile_shape,
+                halo=halo,
             )
 
         except Exception as e:
@@ -178,6 +193,8 @@ def process_single_plate(
     normalize_lower_percentile: float = 1.0,
     normalize_upper_percentile: float = 99.5,
     invert: bool = False,
+    tile_shape: Optional[Tuple[int, int]] = None,
+    halo: Optional[Tuple[int, int]] = None,
 ) -> None:
     """Process a single HCS plate.
 
@@ -189,6 +206,8 @@ def process_single_plate(
         use_amg: Whether using AMG mode
         generate_kwargs: Optional decoder parameters
         channel: Channel to use. Integer index string or omero channel name. Default: first.
+        tile_shape: Tile shape for large well/field images (see process_well).
+        halo: Overlap for stitching tiles when `tile_shape` is set.
     """
     console.print(f"\n[cyan]Opening plate:[/cyan] {plate_path}")
 
@@ -213,6 +232,8 @@ def process_single_plate(
             normalize_lower_percentile=normalize_lower_percentile,
             normalize_upper_percentile=normalize_upper_percentile,
             invert=invert,
+            tile_shape=tile_shape,
+            halo=halo,
         )
         console.print(f"[green]✓[/green] Plate complete: {plate_path}")
     except Exception as e:
@@ -233,6 +254,8 @@ def process_hcs_plates(
     normalize_lower_percentile: float = 1.0,
     normalize_upper_percentile: float = 99.5,
     invert: bool = False,
+    tile_shape: Optional[Tuple[int, int]] = None,
+    halo: Optional[Tuple[int, int]] = None,
 ) -> None:
     """Process either a single plate or all plates in a directory.
 
@@ -246,6 +269,8 @@ def process_hcs_plates(
         use_amg: If True, use AMG instead of decoder-based segmentation
         generate_kwargs: Optional decoder parameters
         channel: Channel to use. Integer index string or omero channel name. Default: first.
+        tile_shape: Tile shape for large well/field images (see process_well).
+        halo: Overlap for stitching tiles when `tile_shape` is set.
     """
     # Load model once
     if model_path is not None:
@@ -262,6 +287,7 @@ def process_hcs_plates(
             device=device,
             model_path=str(model_path) if model_path is not None else None,
             use_amg=use_amg,
+            is_tiled=tile_shape is not None,
         )
         console.print("[green]✓[/green] Model loaded successfully")
     except Exception as e:
@@ -285,6 +311,8 @@ def process_hcs_plates(
             normalize_lower_percentile=normalize_lower_percentile,
             normalize_upper_percentile=normalize_upper_percentile,
             invert=invert,
+            tile_shape=tile_shape,
+            halo=halo,
         )
     else:
         # Parent directory - find all .zarr plates
@@ -313,6 +341,8 @@ def process_hcs_plates(
                 normalize_lower_percentile=normalize_lower_percentile,
                 normalize_upper_percentile=normalize_upper_percentile,
                 invert=invert,
+                tile_shape=tile_shape,
+                halo=halo,
             )
 
 
@@ -351,6 +381,19 @@ def main(
         False,
         "--use-amg",
         help="Use AMG (Automatic Mask Generation) instead of decoder-based segmentation",
+    ),
+    tile_shape: Optional[str] = typer.Option(
+        None,
+        "--tile-shape",
+        help="Tile shape for large well/field images (e.g., '1024,1024'). Strongly "
+        "recommended whenever a well/field is much larger than the training patch_shape — "
+        "without it, AIS/decoder inference silently downscales the whole well image to "
+        "SAM's 1024px encoder input before segmenting.",
+    ),
+    halo: Optional[str] = typer.Option(
+        None,
+        "--halo",
+        help="Overlap for stitching tiles (e.g., '128,128'). Only used with --tile-shape.",
     ),
     center_distance_threshold: float = typer.Option(
         0.5,
@@ -433,6 +476,37 @@ def main(
         device = "cuda" if torch.cuda.is_available() else "cpu"
     console.print(f"[cyan]Device:[/cyan] {device}")
 
+    # Parse tile parameters
+    tile_shape_tuple = None
+    halo_tuple = None
+    if tile_shape:
+        try:
+            tile_shape_tuple = tuple(map(int, tile_shape.split(",")))
+            if len(tile_shape_tuple) != 2:
+                raise ValueError
+            console.print(
+                f"[cyan]Tiling mode:[/cyan] Using tiles of shape {tile_shape_tuple}"
+            )
+        except ValueError:
+            console.print(
+                "[bold red]Error:[/bold red] tile-shape must be two integers separated by comma (e.g., '1024,1024')"
+            )
+            raise typer.Exit(1)
+
+        if halo:
+            try:
+                halo_tuple = tuple(map(int, halo.split(",")))
+                if len(halo_tuple) != 2:
+                    raise ValueError
+                console.print(f"[cyan]Tile overlap:[/cyan] {halo_tuple}")
+            except ValueError:
+                console.print(
+                    "[bold red]Error:[/bold red] halo must be two integers separated by comma (e.g., '128,128')"
+                )
+                raise typer.Exit(1)
+        else:
+            halo_tuple = (0, 0)
+
     # Prepare decoder parameters
     generate_kwargs = {
         "center_distance_threshold": center_distance_threshold,
@@ -457,6 +531,8 @@ def main(
         normalize_lower_percentile=normalize_lower_percentile,
         normalize_upper_percentile=normalize_upper_percentile,
         invert=invert,
+        tile_shape=tile_shape_tuple,
+        halo=halo_tuple,
     )
 
     console.print("\n[bold green]✓ All inference complete![/bold green]")

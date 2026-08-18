@@ -17,6 +17,9 @@
 #   TIFF: sbatch scripts/submit_inference.sh <model_path> <input_dir> <output_dir> [extra_args]
 #   Zarr: sbatch scripts/submit_inference.sh <model_path> <input.zarr> "" [extra_args]
 #         (output_dir not used for zarr - labels written back to zarr)
+#   Pretrained/base model (no custom checkpoint): pass "" as <model_path>, and specify
+#   the desired base model via --model-type in [extra_args] (default vit_b_lm if omitted):
+#     sbatch scripts/submit_inference.sh "" images/ masks/ --model-type vit_b_lm
 #
 # Selecting a specific channel (OME-Zarr: by label name, wavelength ID, or index; TIFF: index only):
 #   sbatch scripts/submit_inference.sh model.pt images/ masks/ --channel BF
@@ -28,6 +31,7 @@ set -eu
 if [ $# -lt 3 ]; then
     echo "Usage: sbatch scripts/submit_inference.sh <model_path> <input_path> <output_dir> [extra_args]"
     echo "  For OME-Zarr: output_dir can be empty (\"\"), labels are written back to zarr"
+    echo "  For the pretrained/base model: pass \"\" as <model_path> and set --model-type in [extra_args]"
     exit 1
 fi
 
@@ -58,7 +62,7 @@ OUTPUT_DIR=$3
 shift 3
 
 echo "[INFO] Starting inference job $SLURM_JOB_ID"
-echo "[INFO] Model: $MODEL_PATH"
+echo "[INFO] Model: ${MODEL_PATH:-<none, using pretrained micro-sam model via --model-type>}"
 echo "[INFO] Input: $INPUT_DIR"
 echo "[INFO] Output: $OUTPUT_DIR"
 echo "[INFO] Extra Args: $@"
@@ -68,11 +72,17 @@ if [ -n "$OUTPUT_DIR" ]; then
     mkdir -p "$OUTPUT_DIR"
 fi
 
-# TODO make model path not required 
+# Only pass --model when a checkpoint path was given; an empty MODEL_PATH means
+# "use the pretrained micro-sam model" (run_inference.py downloads/caches it based
+# on --model-type, which the caller should pass in [extra_args]).
+MODEL_ARGS=()
+if [ -n "$MODEL_PATH" ]; then
+    MODEL_ARGS=(--model "$MODEL_PATH")
+fi
 
 # Run inference - pass all extra arguments through
 pixi run -e gpu python sam_trainer/run_inference.py \
-    --model "$MODEL_PATH" \
+    "${MODEL_ARGS[@]}" \
     --input "$INPUT_DIR" \
     --output "$OUTPUT_DIR" \
     "$@"
