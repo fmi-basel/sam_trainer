@@ -193,27 +193,71 @@ def _to_2d(image: np.ndarray, channel_index: int = 0) -> np.ndarray:
     return image
 
 
-def _merge_along_seam_band(band: np.ndarray, min_run: int, union) -> None:
-    """Union label pairs from long, straight runs of exactly-2-labels-present columns.
+def _seam_transition(strip: np.ndarray, center: float) -> Optional[Tuple[int, int, float]]:
+    """Find the label transition nearest the seam along a cross-seam strip.
+
+    Returns `(label_before, label_after, offset)` if `strip` (a 1D cross-section
+    perpendicular to the seam) contains exactly two distinct nonzero labels, else `None`.
+    `center` is the strip index corresponding to the nominal seam pixel. With a wide search
+    band (large `margin`), a strip can contain small far-away clusters of either label near
+    the band's edges that are irrelevant to the seam itself (e.g. the same two cells also
+    happen to be near each other well away from where they actually touch) — picking *the*
+    transition among all label changes in the strip that's nearest `center`, rather than using
+    each label's global extremal pixel, keeps the estimate meaningful regardless of how wide
+    the band is.
+    """
+    nz_idx = np.flatnonzero(strip)
+    if nz_idx.size == 0:
+        return None
+    values = strip[nz_idx]
+    if np.unique(values).size != 2:
+        return None
+    change_positions = np.flatnonzero(np.diff(values) != 0)
+    if change_positions.size == 0:
+        return None
+    offsets = (nz_idx[change_positions] + nz_idx[change_positions + 1]) / 2.0
+    best = change_positions[np.argmin(np.abs(offsets - center))]
+    offset = float((nz_idx[best] + nz_idx[best + 1]) / 2.0)
+    return int(values[best]), int(values[best + 1]), offset
+
+
+def _merge_along_seam_band(
+    band: np.ndarray, center: float, min_run: int, max_offset_spread: int, union
+) -> None:
+    """Union label pairs from long, *straight* runs of a clean 2-label transition.
 
     `band` is a strip of pixels straddling a tile seam, shape (band_width, n_positions) —
-    i.e. each column `i` is the cross-section of pixel values at position `i` along the seam,
-    spanning a small margin on both sides of it. The split boundary from a seam artifact
-    doesn't necessarily sit exactly on the seam pixel (empirically it can land a few pixels
-    off, presumably wherever the two tiles' stitched decoder outputs happen to disagree most),
-    so scanning a margin band and checking "exactly 2 distinct labels present in this
-    cross-section" catches it even when the two label regions aren't directly touching at the
-    exact seam line. A short run of a given pair is normal (two genuinely distinct cells
-    happen to pass close to the same seam), but a long straight run of the *same* pair is the
-    signature of one cell getting cut by the tiling seam.
+    each column `i` is the cross-section of pixel values at position `i` along the seam,
+    spanning a small margin on both sides of it. Two requirements distinguish a genuine
+    tiling-seam split from two cells that merely happen to touch near a seam:
+    1. Long run (>= min_run) of the *same* label pair.
+    2. Most of the run sits at a nearly constant offset from the seam (straight, parallel to
+       the seam — within `max_offset_spread` of the run's median offset), not wandering the
+       way an organic cell-cell boundary does. Without this check, a long curved genuine
+       contact between two distinct cells can satisfy "same pair for a while" and get
+       incorrectly merged (confirmed 2026-08-19). A median-based "core" count rather than raw
+       max-min is used deliberately: with a wide search band, `_seam_transition` can pick an
+       unrelated, far-away transition for a handful of columns where the true near-seam
+       transition is momentarily ambiguous (confirmed 2026-08-19 — this made one genuine
+       190px, otherwise dead-straight run look like a 58px spread using raw max-min). Requiring
+       most (not all) of the run to be tight tolerates that without accepting a genuinely
+       curved boundary, which won't have a majority cluster near any single offset.
     """
     n_positions = band.shape[1]
-    pairs: list = [None] * n_positions
-    for i in range(n_positions):
-        labels = np.unique(band[:, i])
-        labels = labels[labels != 0]
-        if len(labels) == 2:
-            pairs[i] = (int(labels[0]), int(labels[1]))
+    transitions = [_seam_transition(band[:, i], center) for i in range(n_positions)]
+    pairs = [(t[0], t[1]) if t else None for t in transitions]
+
+    def close_run(run_start: int, run_end: int, pair) -> None:
+        if pair is None or run_end - run_start < min_run:
+            return
+        offsets = np.array([transitions[i][2] for i in range(run_start, run_end)])
+        core = np.abs(offsets - np.median(offsets)) <= max_offset_spread
+        # Both an absolute floor (avoids a short run passing on a tiny, easy-to-hit majority)
+        # and a high fraction (avoids a genuinely wandering boundary passing just because *some*
+        # long sub-stretch happens to be locally flat) — confirmed 2026-08-19: a genuine seam
+        # split scored 98% core fraction, the known-bad corner over-merge case scored 64%.
+        if core.sum() >= min_run and core.mean() >= 0.85:
+            union(*pair)
 
     run_start = 0
     run_pair = pairs[0] if n_positions else None
@@ -221,14 +265,18 @@ def _merge_along_seam_band(band: np.ndarray, min_run: int, union) -> None:
         current = pairs[i] if i < n_positions else None
         if current == run_pair:
             continue
-        if run_pair is not None and i - run_start >= min_run:
-            union(*run_pair)
+        close_run(run_start, i, run_pair)
         run_start = i
         run_pair = current
 
 
 def _merge_tile_seam_splits(
-    masks: np.ndarray, tile_shape: Tuple[int, int], margin: int = 16, min_run: int = 10
+    masks: np.ndarray,
+    tile_shape: Tuple[int, int],
+    halo: Optional[Tuple[int, int]] = None,
+    margin: Optional[int] = None,
+    min_run: int = 10,
+    max_offset_spread: int = 8,
 ) -> np.ndarray:
     """Merge instances that tiled AIS inference split along tile-grid seams.
 
@@ -237,33 +285,49 @@ def _merge_tile_seam_splits(
     the halo only gives each tile's encoder extra context, predictions from adjacent tiles
     are never blended. A cell straddling a seam can get slightly different center/boundary
     predictions on each side, and the watershed-style instance decoding then treats that
-    mismatch as a real boundary, splitting one cell into two near the seam line — the actual
-    split boundary can land a few pixels off the exact seam coordinate (confirmed empirically
-    2026-08-19: one real split's true label transition sat 2px from the nominal seam, which a
-    naive single-pixel-either-side check missed entirely), so this scans a small band around
-    each seam rather than just the immediate seam pixel.
+    mismatch as a real boundary, splitting one cell into two near the seam line. The actual
+    split boundary can land well off the exact seam coordinate — confirmed empirically
+    2026-08-19: most cases sat 1-13px from the nominal seam, but one genuine (perfectly
+    straight, spread=0) split sat 58px away with `halo=128`. Since halo is exactly the size of
+    the context window that can make a tile's prediction diverge before reaching the seam
+    itself, the search band scales with it by default (`margin = halo`) rather than using a
+    fixed constant — a fixed small margin (16px) missed that case entirely.
 
-    Confirmed empirically on real Jessica plate inference output: several masks had long,
-    straight bands (10-280+ px) where exactly 2 labels co-occurred near a tile-grid seam,
-    clearly distinct from the noise floor of genuinely separate adjacent cells that happen to
-    pass close to the same seam.
+    A pair is only merged if the transition between the two labels is long *and straight*
+    (near-constant offset from the seam across the run) — a long but curved/wandering contact
+    is what a genuine cell-cell touch near a seam looks like, and merging on "same pair for a
+    while" alone (an earlier version of this function) was confirmed to both over-merge two
+    genuinely distinct touching cells and, via transitive union-find, pull in an unrelated
+    third instance that happened to share a label with one genuine split. The straightness
+    check is what makes it safe to use a generous margin — a coincidentally long, dead-straight
+    (within a few px) run between two unrelated cells over 50+ px is not a realistic biological
+    boundary shape, so widening the search window doesn't materially increase false merges.
 
-    Tile seams are deterministic — the tiling grid always starts at (0, 0) (see
-    `TiledInstanceSegmentationWithDecoder.initialize` → `blocking([0, 0], original_size,
-    tile_shape)`), so seam lines fall at exact multiples of `tile_shape` regardless of halo.
+    Tile seams are deterministic — the tiling grid always starts at (0, 0) (confirmed against
+    the installed `micro_sam`/`bioimage_cpp` `Blocking` class directly, not just assumed: tiles
+    are simple truncation, size `tile_shape` except a clipped last tile per axis), so seam
+    lines fall at exact multiples of `tile_shape` regardless of halo.
 
     Args:
         masks: Instance segmentation labels from tiled AIS inference.
         tile_shape: The tile shape used for inference (same value passed to `initialize`).
+        halo: The halo used for inference (same value passed to `initialize`). Used to size
+            `margin` by default; pass explicitly if `initialize` was called with a halo.
         margin: Half-width (pixels) of the band scanned on each side of a seam line for
-            candidate split-label pairs.
+            candidate split-label pairs. Defaults to `max(halo)` (at least 16) when not given.
         min_run: Minimum contiguous run length (pixels) of the same 2-label pair along a
             seam band to treat as a split rather than coincidental cell-to-cell proximity.
+        max_offset_spread: Maximum allowed variation (pixels) in the transition's distance
+            from the seam across a run — enforces that the split boundary is actually straight
+            and seam-aligned, not an organic curved cell-cell contact.
 
     Returns:
         Masks with seam-split instances merged back into a single label (labels unchanged
         for anything not connected to a seam split).
     """
+    if margin is None:
+        margin = max(16, *halo) if halo else 16
+
     if masks.max() == 0:
         return masks
 
@@ -283,10 +347,10 @@ def _merge_tile_seam_splits(
     height, width = masks.shape
     for seam in range(tile_shape[0], height, tile_shape[0]):
         lo, hi = max(0, seam - margin), min(height, seam + margin)
-        _merge_along_seam_band(masks[lo:hi, :], min_run, union)
+        _merge_along_seam_band(masks[lo:hi, :], seam - lo, min_run, max_offset_spread, union)
     for seam in range(tile_shape[1], width, tile_shape[1]):
         lo, hi = max(0, seam - margin), min(width, seam + margin)
-        _merge_along_seam_band(masks[:, lo:hi].T, min_run, union)
+        _merge_along_seam_band(masks[:, lo:hi].T, seam - lo, min_run, max_offset_spread, union)
 
     roots = {label: find(label) for label in parent}
     if all(root == label for label, root in roots.items()):
@@ -358,7 +422,7 @@ def segment_image(
             segmenter.initialize(image)
         masks = segmenter.generate(**generate_kwargs)
         if tile_shape is not None:
-            masks = _merge_tile_seam_splits(masks, tile_shape)
+            masks = _merge_tile_seam_splits(masks, tile_shape, halo=halo or (0, 0))
     else:
         # AMG-based segmentation: use automatic_instance_segmentation
         masks = automatic_instance_segmentation(
