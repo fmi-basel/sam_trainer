@@ -193,28 +193,42 @@ def _to_2d(image: np.ndarray, channel_index: int = 0) -> np.ndarray:
     return image
 
 
-def _merge_along_seam_line(a: np.ndarray, b: np.ndarray, min_run: int, union) -> None:
-    """Union label pairs from long, straight runs of touching-but-different labels.
+def _merge_along_seam_band(band: np.ndarray, min_run: int, union) -> None:
+    """Union label pairs from long, straight runs of exactly-2-labels-present columns.
 
-    `a`/`b` are the two rows (or columns) of pixels immediately on either side of a tile
-    seam. A short touching run is normal (two genuinely distinct cells happen to abut), but
-    a long straight run is the signature of one cell getting cut by the tiling seam.
+    `band` is a strip of pixels straddling a tile seam, shape (band_width, n_positions) —
+    i.e. each column `i` is the cross-section of pixel values at position `i` along the seam,
+    spanning a small margin on both sides of it. The split boundary from a seam artifact
+    doesn't necessarily sit exactly on the seam pixel (empirically it can land a few pixels
+    off, presumably wherever the two tiles' stitched decoder outputs happen to disagree most),
+    so scanning a margin band and checking "exactly 2 distinct labels present in this
+    cross-section" catches it even when the two label regions aren't directly touching at the
+    exact seam line. A short run of a given pair is normal (two genuinely distinct cells
+    happen to pass close to the same seam), but a long straight run of the *same* pair is the
+    signature of one cell getting cut by the tiling seam.
     """
-    both_fg = (a > 0) & (b > 0)
-    diff = both_fg & (a != b)
-    if not diff.any():
-        return
-    idx = np.flatnonzero(diff)
-    runs = np.split(idx, np.where(np.diff(idx) != 1)[0] + 1)
-    for run in runs:
-        if len(run) < min_run:
+    n_positions = band.shape[1]
+    pairs: list = [None] * n_positions
+    for i in range(n_positions):
+        labels = np.unique(band[:, i])
+        labels = labels[labels != 0]
+        if len(labels) == 2:
+            pairs[i] = (int(labels[0]), int(labels[1]))
+
+    run_start = 0
+    run_pair = pairs[0] if n_positions else None
+    for i in range(1, n_positions + 1):
+        current = pairs[i] if i < n_positions else None
+        if current == run_pair:
             continue
-        for i in run:
-            union(int(a[i]), int(b[i]))
+        if run_pair is not None and i - run_start >= min_run:
+            union(*run_pair)
+        run_start = i
+        run_pair = current
 
 
 def _merge_tile_seam_splits(
-    masks: np.ndarray, tile_shape: Tuple[int, int], min_run: int = 10
+    masks: np.ndarray, tile_shape: Tuple[int, int], margin: int = 16, min_run: int = 10
 ) -> np.ndarray:
     """Merge instances that tiled AIS inference split along tile-grid seams.
 
@@ -223,11 +237,16 @@ def _merge_tile_seam_splits(
     the halo only gives each tile's encoder extra context, predictions from adjacent tiles
     are never blended. A cell straddling a seam can get slightly different center/boundary
     predictions on each side, and the watershed-style instance decoding then treats that
-    mismatch as a real boundary, splitting one cell into two along the exact seam line.
-    Confirmed empirically (2026-08-19) on real Jessica plate inference output: several masks
-    had contiguous runs of 20-80+ px of touching-but-different labels exactly at tile-grid
-    coordinates, clearly distinct from the 1-9px noise floor of genuinely separate adjacent
-    cells that happen to touch.
+    mismatch as a real boundary, splitting one cell into two near the seam line — the actual
+    split boundary can land a few pixels off the exact seam coordinate (confirmed empirically
+    2026-08-19: one real split's true label transition sat 2px from the nominal seam, which a
+    naive single-pixel-either-side check missed entirely), so this scans a small band around
+    each seam rather than just the immediate seam pixel.
+
+    Confirmed empirically on real Jessica plate inference output: several masks had long,
+    straight bands (10-280+ px) where exactly 2 labels co-occurred near a tile-grid seam,
+    clearly distinct from the noise floor of genuinely separate adjacent cells that happen to
+    pass close to the same seam.
 
     Tile seams are deterministic — the tiling grid always starts at (0, 0) (see
     `TiledInstanceSegmentationWithDecoder.initialize` → `blocking([0, 0], original_size,
@@ -236,12 +255,14 @@ def _merge_tile_seam_splits(
     Args:
         masks: Instance segmentation labels from tiled AIS inference.
         tile_shape: The tile shape used for inference (same value passed to `initialize`).
-        min_run: Minimum contiguous run length (pixels) of touching-but-different labels
-            along a seam to treat as a split rather than coincidental cell-to-cell contact.
+        margin: Half-width (pixels) of the band scanned on each side of a seam line for
+            candidate split-label pairs.
+        min_run: Minimum contiguous run length (pixels) of the same 2-label pair along a
+            seam band to treat as a split rather than coincidental cell-to-cell proximity.
 
     Returns:
         Masks with seam-split instances merged back into a single label (labels unchanged
-        for anything not touching a seam split).
+        for anything not connected to a seam split).
     """
     if masks.max() == 0:
         return masks
@@ -261,9 +282,11 @@ def _merge_tile_seam_splits(
 
     height, width = masks.shape
     for seam in range(tile_shape[0], height, tile_shape[0]):
-        _merge_along_seam_line(masks[seam - 1, :], masks[seam, :], min_run, union)
+        lo, hi = max(0, seam - margin), min(height, seam + margin)
+        _merge_along_seam_band(masks[lo:hi, :], min_run, union)
     for seam in range(tile_shape[1], width, tile_shape[1]):
-        _merge_along_seam_line(masks[:, seam - 1], masks[:, seam], min_run, union)
+        lo, hi = max(0, seam - margin), min(width, seam + margin)
+        _merge_along_seam_band(masks[:, lo:hi].T, min_run, union)
 
     roots = {label: find(label) for label in parent}
     if all(root == label for label, root in roots.items()):
