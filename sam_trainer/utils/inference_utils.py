@@ -193,6 +193,89 @@ def _to_2d(image: np.ndarray, channel_index: int = 0) -> np.ndarray:
     return image
 
 
+def _merge_along_seam_line(a: np.ndarray, b: np.ndarray, min_run: int, union) -> None:
+    """Union label pairs from long, straight runs of touching-but-different labels.
+
+    `a`/`b` are the two rows (or columns) of pixels immediately on either side of a tile
+    seam. A short touching run is normal (two genuinely distinct cells happen to abut), but
+    a long straight run is the signature of one cell getting cut by the tiling seam.
+    """
+    both_fg = (a > 0) & (b > 0)
+    diff = both_fg & (a != b)
+    if not diff.any():
+        return
+    idx = np.flatnonzero(diff)
+    runs = np.split(idx, np.where(np.diff(idx) != 1)[0] + 1)
+    for run in runs:
+        if len(run) < min_run:
+            continue
+        for i in run:
+            union(int(a[i]), int(b[i]))
+
+
+def _merge_tile_seam_splits(
+    masks: np.ndarray, tile_shape: Tuple[int, int], min_run: int = 10
+) -> np.ndarray:
+    """Merge instances that tiled AIS inference split along tile-grid seams.
+
+    `TiledInstanceSegmentationWithDecoder` stitches each tile's decoder output (foreground/
+    center-distance/boundary-distance maps) with a hard cut at the tile's inner boundary —
+    the halo only gives each tile's encoder extra context, predictions from adjacent tiles
+    are never blended. A cell straddling a seam can get slightly different center/boundary
+    predictions on each side, and the watershed-style instance decoding then treats that
+    mismatch as a real boundary, splitting one cell into two along the exact seam line.
+    Confirmed empirically (2026-08-19) on real Jessica plate inference output: several masks
+    had contiguous runs of 20-80+ px of touching-but-different labels exactly at tile-grid
+    coordinates, clearly distinct from the 1-9px noise floor of genuinely separate adjacent
+    cells that happen to touch.
+
+    Tile seams are deterministic — the tiling grid always starts at (0, 0) (see
+    `TiledInstanceSegmentationWithDecoder.initialize` → `blocking([0, 0], original_size,
+    tile_shape)`), so seam lines fall at exact multiples of `tile_shape` regardless of halo.
+
+    Args:
+        masks: Instance segmentation labels from tiled AIS inference.
+        tile_shape: The tile shape used for inference (same value passed to `initialize`).
+        min_run: Minimum contiguous run length (pixels) of touching-but-different labels
+            along a seam to treat as a split rather than coincidental cell-to-cell contact.
+
+    Returns:
+        Masks with seam-split instances merged back into a single label (labels unchanged
+        for anything not touching a seam split).
+    """
+    if masks.max() == 0:
+        return masks
+
+    parent = {int(label): int(label) for label in np.unique(masks) if label != 0}
+
+    def find(x: int) -> int:
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    def union(a: int, b: int) -> None:
+        root_a, root_b = find(a), find(b)
+        if root_a != root_b:
+            parent[root_a] = root_b
+
+    height, width = masks.shape
+    for seam in range(tile_shape[0], height, tile_shape[0]):
+        _merge_along_seam_line(masks[seam - 1, :], masks[seam, :], min_run, union)
+    for seam in range(tile_shape[1], width, tile_shape[1]):
+        _merge_along_seam_line(masks[:, seam - 1], masks[:, seam], min_run, union)
+
+    roots = {label: find(label) for label in parent}
+    if all(root == label for label, root in roots.items()):
+        return masks
+
+    merged = masks.copy()
+    for label, root in roots.items():
+        if root != label:
+            merged[masks == label] = root
+    return merged
+
+
 def segment_image(
     image: np.ndarray,
     predictor,
@@ -251,6 +334,8 @@ def segment_image(
         else:
             segmenter.initialize(image)
         masks = segmenter.generate(**generate_kwargs)
+        if tile_shape is not None:
+            masks = _merge_tile_seam_splits(masks, tile_shape)
     else:
         # AMG-based segmentation: use automatic_instance_segmentation
         masks = automatic_instance_segmentation(
