@@ -117,11 +117,6 @@ class TrainingConfig(BaseModel):
         ge=1,
         description="Number of random patches per image per epoch (None=auto, typically 16)",
     )
-    num_workers: int = Field(
-        default=4,
-        ge=0,
-        description="Number of dataloader workers for parallel data loading (0=single-threaded)",
-    )
     learning_rate: float = Field(default=1e-5, gt=0, description="Learning rate")
     early_stopping: Optional[int] = Field(
         default=10,

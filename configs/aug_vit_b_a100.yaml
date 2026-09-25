@@ -17,7 +17,6 @@ training:
   batch_size: 6
   n_epochs: 100
   n_samples: null
-  num_workers: 12
   learning_rate: 1.0e-5
   early_stopping: 10
   val_split: 0.1

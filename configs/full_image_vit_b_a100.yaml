@@ -9,7 +9,6 @@ training:
   batch_size: 6  # Increased from 1 - plenty of GPU memory available (only using 13GB/80GB)
   n_epochs: 200  # Longer training since we see each image once per epoch
   n_samples: null  # null = use actual dataset size (all images, no random sampling)
-  num_workers: 12  # Increased from 4 to utilize available CPUs (20 allocated)
   learning_rate: 5.0e-5
   early_stopping: 50  # Allow 100 epochs without improvement before stopping (weekend run can explore plateaus)
   val_split: 0.05

@@ -237,7 +237,6 @@ def run_training(config: TrainingConfig, output_dir: Path) -> dict[str, Path]:
     logger.info(f"Learning rate: {config.learning_rate:.2e}")
     logger.info(f"Early stopping after: {config.early_stopping} epochs")
     logger.info(f"Validation split: {config.val_split:.2f}")
-    logger.info(f"Number of workers: {config.num_workers}")
 
     # Check for GPU
     device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -248,7 +247,6 @@ def run_training(config: TrainingConfig, output_dir: Path) -> dict[str, Path]:
 
     # Create data loaders
     logger.info("Creating data loaders...")
-    logger.info(f"Using {config.num_workers} dataloader workers")
 
     raw_transform = _build_raw_transform(config)
     if config.use_min_instance_sampler:
@@ -291,7 +289,12 @@ def run_training(config: TrainingConfig, output_dir: Path) -> dict[str, Path]:
         "with_segmentation_decoder": True,
         "train_instance_segmentation_only": config.train_instance_segmentation_only,
         "n_samples": config.n_samples,
-        "num_workers": config.num_workers,
+        # Hardcoded, not user-configurable: num_workers > 0 forks OpenCV's internal thread
+        # pool into DataLoader worker processes and reliably corrupts the heap under load
+        # (glibc "corrupted size vs. prev_size" / "double free"), sooner or later depending
+        # on timing. cv2.setNumThreads(0) alone only delays the crash, it doesn't prevent it.
+        # See SAM Trainer Dev Log 2026-07-03 and 2026-09-25 for two confirmed occurrences.
+        "num_workers": 0,
         "raw_transform": raw_transform,
         # default_sam_dataset uses this to build its own label transform (e.g.
         # PerObjectDistanceTransform for full-SAM decoder training), independently of the
