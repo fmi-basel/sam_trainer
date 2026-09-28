@@ -36,7 +36,7 @@ training:
   normalize_upper_percentile: 99.5
   use_min_instance_sampler: true
   min_instances_per_patch: 2
-  min_instance_size: 25
+  min_instance_size: 100
   save_validation_predictions_frequency: 5
   checkpoint_name: "organoids_turco_touching_aug5_ckpt"
   resume_from_checkpoint: "final_models/organoids_turco_lean.pt"
