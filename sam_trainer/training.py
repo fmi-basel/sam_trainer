@@ -8,6 +8,7 @@ from typing import Optional
 
 import cv2
 import numpy as np
+import skimage.measure
 import torch
 from micro_sam.training import (
     default_sam_loader,
@@ -118,6 +119,23 @@ def _build_raw_transform(config: TrainingConfig):
     )
 
     return PercentileNormalizer(lower, upper, invert=config.invert_inputs)
+
+
+def _split_disconnected_instances(label_patch: np.ndarray) -> np.ndarray:
+    """Split each instance ID into its connected components within the patch.
+
+    ``MinInstanceSampler`` counts total pixels per raw instance ID, but
+    ``PerObjectDistanceTransform(apply_label=True)`` (used downstream for the
+    decoder target) relabels connected components *first* and then drops
+    components under ``min_size``. For touching/adjacent organoids, a crop can
+    slice a single instance into several disconnected pieces that individually
+    fall under ``min_size`` even though the raw ID's total pixel count passed
+    the sampler, leaving zero valid objects for the transform and crashing
+    ``segmentation_to_one_hot`` deep in training. Applying the same splitting
+    before the sampler runs makes its accept/reject decision match what the
+    transform will actually keep.
+    """
+    return skimage.measure.label(label_patch).astype(label_patch.dtype)
 
 
 _AUG_SUFFIX_RE = re.compile(r"_(?:aug\d+|orig)$")
@@ -301,6 +319,11 @@ def run_training(config: TrainingConfig, output_dir: Path) -> dict[str, Path]:
         # sampler above. Must match the sampler's min_size or a patch that passes the sampler
         # can still end up with zero foreground after the label transform filters it out.
         "min_size": effective_min_size,
+        # Applied to the raw label crop before the sampler above validates it, so the
+        # sampler's instance/size count matches what PerObjectDistanceTransform will later
+        # keep (see _split_disconnected_instances docstring for why these can otherwise
+        # disagree and crash training).
+        "pre_label_transform": _split_disconnected_instances,
     }
 
     # Check mode and create appropriate loaders
