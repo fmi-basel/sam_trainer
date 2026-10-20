@@ -7,24 +7,15 @@
 #SBATCH --ntasks-per-node=1
 #SBATCH --partition=main
 #SBATCH --mem=150G
-#SBATCH --gres=gpu:1
+#SBATCH --gres=gpu:nvidia_h100_nvl:1
 #SBATCH --time=56:00:00
 #SBATCH --output=logs/%x-%j.out
 #SBATCH --error=logs/%x-%j.err
 
-# SAM Training SLURM Batch Script (A100 / 80GB GPU)
-# Usage: sbatch scripts/submit_training_a100.sh <path_to_config.yaml>
+# SAM Training SLURM Batch Script (H100 / 98GB GPU)
+# Usage: sbatch scripts/submit_training_h100.sh <path_to_config.yaml>
 
 set -eu
-
-function display_memory_usage() {
-    set +eu
-    echo -n "[INFO] [$(date -Iseconds)] [$$] Max memory usage in bytes: "
-    cat /sys/fs/cgroup/memory/slurm/uid_$(id -u)/job_${SLURM_JOB_ID}/memory.max_usage_in_bytes
-    echo
-}
-
-trap display_memory_usage EXIT
 
 # Activate pixi environment (cluster-compatible bootstrap used by other scripts).
 WD="$(pwd)"
@@ -32,6 +23,9 @@ export PATH="$PATH:$WD/infrastructure/apps/pixi/bin"
 export PIXI_CACHE_DIR="$WD/infrastructure/apps/pixi/.pixi_cache"
 export TMPDIR="$WD/infrastructure/.tmp_$USER"
 mkdir -p "$TMPDIR"
+
+# micro_sam pretrained weights live in a shared cache (default ~/.cache is quota-limited).
+export MICROSAM_CACHEDIR="/tachyon/groups/scratch/gmicro/khosnikl/microsam_models_cache"
 
 
 START=$(date +%s)
@@ -43,7 +37,7 @@ echo "[INFO] [$STARTDATE] [$$] Working directory: $(pwd)"
 # Check if config file was provided
 if [ $# -eq 0 ]; then
     echo "[ERROR] No config file provided"
-    echo "Usage: sbatch scripts/submit_training_a100.sh <path_to_config.yaml>"
+    echo "Usage: sbatch scripts/submit_training_new_cluster.sh <path_to_config.yaml>"
     exit 1
 fi
 
@@ -56,9 +50,21 @@ fi
 
 echo "[INFO] [$STARTDATE] [$$] Using config: $CONFIG_PATH"
 
-# Set threading for optimal CPU usage with 20 cores
-export OMP_NUM_THREADS=${OMP_NUM_THREADS:-8}
-export MKL_NUM_THREADS=${MKL_NUM_THREADS:-8}
+# Pinned to 1: OMP_NUM_THREADS=8/MKL_NUM_THREADS=8 was live during a
+# glibc heap-corruption crash (free(): corrupted unsorted chunks, job 52733,
+# 2026-09-29) even with num_workers=0 (no DataLoader forking). Testing
+# whether concurrent multi-threaded native code (BLAS/OpenMP racing with
+# OpenCV/PyTorch's own thread pool) in-process is the real root cause, not
+# the fork-based one from the earlier (incomplete) fix. See SAM Trainer Dev
+# Log / project_slurm_heap_corruption memory.
+export OMP_NUM_THREADS=${OMP_NUM_THREADS:-1}
+export MKL_NUM_THREADS=${MKL_NUM_THREADS:-1}
+export OPENBLAS_NUM_THREADS=${OPENBLAS_NUM_THREADS:-1}
+
+# tqdm writes one line per \r update; since stderr is redirected to a file
+# (not a TTY) these don't overwrite in place and bloat the log. Throttle to
+# one line per 30s of wall time instead.
+export TQDM_MININTERVAL=${TQDM_MININTERVAL:-30}
 
 # Run training
 echo "[INFO] [$STARTDATE] [$$] Starting SAM training on new cluster and H100..."

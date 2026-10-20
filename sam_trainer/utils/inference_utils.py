@@ -7,13 +7,16 @@ and segmentation that are used by various inference scripts.
 from typing import Any, Dict, Optional, Tuple
 
 import numpy as np
+import torch
 from micro_sam.automatic_segmentation import (
     automatic_instance_segmentation,
     get_predictor_and_segmenter,
 )
 from micro_sam.instance_segmentation import InstanceSegmentationWithDecoder
+from micro_sam.util import get_sam_model
 
 from sam_trainer.utils.logging import get_logger
+from sam_trainer.utils.normalization import PercentileNormalizer
 
 logger = get_logger(__name__)
 
@@ -23,12 +26,10 @@ def load_model_with_decoder(
     device: str,
     model_path: Optional[str] = None,
     use_amg: bool = False,
+    is_tiled: bool = False,
     **amg_kwargs,
 ) -> Tuple:
     """Load an exported model with either decoder or AMG segmentation.
-
-    This uses micro-SAM's get_predictor_and_segmenter which properly handles
-    both AMG and decoder-based (AIS) modes.
 
     Args:
         model_type: SAM model type (e.g., 'vit_b_lm', 'vit_l_lm')
@@ -36,29 +37,57 @@ def load_model_with_decoder(
         model_path: Path to a custom model checkpoint (.pt file). If None, the
             pre-trained micro-SAM model for `model_type` is downloaded/used from cache.
         use_amg: If True, use AMG instead of decoder-based segmentation
+        is_tiled: If True, build a segmenter that supports tiled image embeddings
+            (`TiledInstanceSegmentationWithDecoder`/`TiledAutomaticMaskGenerator`) instead
+            of the whole-image one. Required for tiled inference — the whole-image segmenter
+            can't be tiled after the fact by passing `tile_shape` to `initialize()`. Must be
+            set whenever a `tile_shape` will be passed to `segment_image()`.
         **amg_kwargs: Additional kwargs for AMG (pred_iou_thresh, stability_score_thresh, etc.)
 
     Returns:
-        Tuple of (predictor, segmenter) where:
-            - predictor: SAM predictor for image encoding
-            - segmenter: InstanceSegmentationWithDecoder or AMG for generating masks
+        Tuple of (predictor, segmenter)
 
     Raises:
         Exception: If model loading fails
     """
     mode = "AMG" if use_amg else "AIS (decoder-based)"
-    logger.info(f"Loading model with {mode} segmentation")
+    logger.info(f"Loading model with {mode} segmentation" + (" (tiled)" if is_tiled else ""))
+    segmentation_mode = "amg" if use_amg else "ais"
 
-    # Use get_predictor_and_segmenter which properly handles both modes.
-    # When checkpoint=None, micro-SAM downloads/uses the cached pre-trained model for model_type.
+    if model_path is not None:
+        state = torch.load(model_path, map_location="cpu", weights_only=False)
+        if isinstance(state, dict) and "decoder_state" in state:
+            # Exported instance-segmentation model (encoder + UNETR decoder).
+            # get_predictor_and_segmenter passes the checkpoint to get_sam_model which
+            # calls sam.load_state_dict on the full dict — failing on decoder_state.
+            # Fix: load SAM encoder with flexible_load_checkpoint (ignores unknown keys),
+            # then supply the pre-loaded state so get_predictor_and_segmenter can pick
+            # up decoder_state without re-loading the file.
+            predictor = get_sam_model(
+                model_type=model_type,
+                device=device,
+                checkpoint_path=model_path,
+                flexible_load_checkpoint=True,
+            )
+            _, segmenter = get_predictor_and_segmenter(
+                model_type=model_type,
+                predictor=predictor,
+                state=state,
+                device=device,
+                segmentation_mode=segmentation_mode,
+                is_tiled=is_tiled,
+                **amg_kwargs,
+            )
+            return predictor, segmenter
+
     predictor, segmenter = get_predictor_and_segmenter(
         model_type=model_type,
         checkpoint=model_path,
         device=device,
-        amg=use_amg,  # This tells micro-SAM which mode to use
+        segmentation_mode=segmentation_mode,
+        is_tiled=is_tiled,
         **amg_kwargs,
     )
-
     return predictor, segmenter
 
 
@@ -164,6 +193,176 @@ def _to_2d(image: np.ndarray, channel_index: int = 0) -> np.ndarray:
     return image
 
 
+def _seam_transition(strip: np.ndarray, center: float) -> Optional[Tuple[int, int, float]]:
+    """Find the label transition nearest the seam along a cross-seam strip.
+
+    Returns `(label_before, label_after, offset)` if `strip` (a 1D cross-section
+    perpendicular to the seam) contains exactly two distinct nonzero labels, else `None`.
+    `center` is the strip index corresponding to the nominal seam pixel. With a wide search
+    band (large `margin`), a strip can contain small far-away clusters of either label near
+    the band's edges that are irrelevant to the seam itself (e.g. the same two cells also
+    happen to be near each other well away from where they actually touch) — picking *the*
+    transition among all label changes in the strip that's nearest `center`, rather than using
+    each label's global extremal pixel, keeps the estimate meaningful regardless of how wide
+    the band is.
+    """
+    nz_idx = np.flatnonzero(strip)
+    if nz_idx.size == 0:
+        return None
+    values = strip[nz_idx]
+    if np.unique(values).size != 2:
+        return None
+    change_positions = np.flatnonzero(np.diff(values) != 0)
+    if change_positions.size == 0:
+        return None
+    offsets = (nz_idx[change_positions] + nz_idx[change_positions + 1]) / 2.0
+    best = change_positions[np.argmin(np.abs(offsets - center))]
+    offset = float((nz_idx[best] + nz_idx[best + 1]) / 2.0)
+    return int(values[best]), int(values[best + 1]), offset
+
+
+def _merge_along_seam_band(
+    band: np.ndarray, center: float, min_run: int, max_offset_spread: int, union
+) -> None:
+    """Union label pairs from long, *straight* runs of a clean 2-label transition.
+
+    `band` is a strip of pixels straddling a tile seam, shape (band_width, n_positions) —
+    each column `i` is the cross-section of pixel values at position `i` along the seam,
+    spanning a small margin on both sides of it. Two requirements distinguish a genuine
+    tiling-seam split from two cells that merely happen to touch near a seam:
+    1. Long run (>= min_run) of the *same* label pair.
+    2. Most of the run sits at a nearly constant offset from the seam (straight, parallel to
+       the seam — within `max_offset_spread` of the run's median offset), not wandering the
+       way an organic cell-cell boundary does. Without this check, a long curved genuine
+       contact between two distinct cells can satisfy "same pair for a while" and get
+       incorrectly merged (confirmed 2026-08-19). A median-based "core" count rather than raw
+       max-min is used deliberately: with a wide search band, `_seam_transition` can pick an
+       unrelated, far-away transition for a handful of columns where the true near-seam
+       transition is momentarily ambiguous (confirmed 2026-08-19 — this made one genuine
+       190px, otherwise dead-straight run look like a 58px spread using raw max-min). Requiring
+       most (not all) of the run to be tight tolerates that without accepting a genuinely
+       curved boundary, which won't have a majority cluster near any single offset.
+    """
+    n_positions = band.shape[1]
+    transitions = [_seam_transition(band[:, i], center) for i in range(n_positions)]
+    pairs = [(t[0], t[1]) if t else None for t in transitions]
+
+    def close_run(run_start: int, run_end: int, pair) -> None:
+        if pair is None or run_end - run_start < min_run:
+            return
+        offsets = np.array([transitions[i][2] for i in range(run_start, run_end)])
+        core = np.abs(offsets - np.median(offsets)) <= max_offset_spread
+        # Both an absolute floor (avoids a short run passing on a tiny, easy-to-hit majority)
+        # and a high fraction (avoids a genuinely wandering boundary passing just because *some*
+        # long sub-stretch happens to be locally flat) — confirmed 2026-08-19: a genuine seam
+        # split scored 98% core fraction, the known-bad corner over-merge case scored 64%.
+        if core.sum() >= min_run and core.mean() >= 0.85:
+            union(*pair)
+
+    run_start = 0
+    run_pair = pairs[0] if n_positions else None
+    for i in range(1, n_positions + 1):
+        current = pairs[i] if i < n_positions else None
+        if current == run_pair:
+            continue
+        close_run(run_start, i, run_pair)
+        run_start = i
+        run_pair = current
+
+
+def _merge_tile_seam_splits(
+    masks: np.ndarray,
+    tile_shape: Tuple[int, int],
+    halo: Optional[Tuple[int, int]] = None,
+    margin: Optional[int] = None,
+    min_run: int = 10,
+    max_offset_spread: int = 8,
+) -> np.ndarray:
+    """Merge instances that tiled AIS inference split along tile-grid seams.
+
+    `TiledInstanceSegmentationWithDecoder` stitches each tile's decoder output (foreground/
+    center-distance/boundary-distance maps) with a hard cut at the tile's inner boundary —
+    the halo only gives each tile's encoder extra context, predictions from adjacent tiles
+    are never blended. A cell straddling a seam can get slightly different center/boundary
+    predictions on each side, and the watershed-style instance decoding then treats that
+    mismatch as a real boundary, splitting one cell into two near the seam line. The actual
+    split boundary can land well off the exact seam coordinate — confirmed empirically
+    2026-08-19: most cases sat 1-13px from the nominal seam, but one genuine (perfectly
+    straight, spread=0) split sat 58px away with `halo=128`. Since halo is exactly the size of
+    the context window that can make a tile's prediction diverge before reaching the seam
+    itself, the search band scales with it by default (`margin = halo`) rather than using a
+    fixed constant — a fixed small margin (16px) missed that case entirely.
+
+    A pair is only merged if the transition between the two labels is long *and straight*
+    (near-constant offset from the seam across the run) — a long but curved/wandering contact
+    is what a genuine cell-cell touch near a seam looks like, and merging on "same pair for a
+    while" alone (an earlier version of this function) was confirmed to both over-merge two
+    genuinely distinct touching cells and, via transitive union-find, pull in an unrelated
+    third instance that happened to share a label with one genuine split. The straightness
+    check is what makes it safe to use a generous margin — a coincidentally long, dead-straight
+    (within a few px) run between two unrelated cells over 50+ px is not a realistic biological
+    boundary shape, so widening the search window doesn't materially increase false merges.
+
+    Tile seams are deterministic — the tiling grid always starts at (0, 0) (confirmed against
+    the installed `micro_sam`/`bioimage_cpp` `Blocking` class directly, not just assumed: tiles
+    are simple truncation, size `tile_shape` except a clipped last tile per axis), so seam
+    lines fall at exact multiples of `tile_shape` regardless of halo.
+
+    Args:
+        masks: Instance segmentation labels from tiled AIS inference.
+        tile_shape: The tile shape used for inference (same value passed to `initialize`).
+        halo: The halo used for inference (same value passed to `initialize`). Used to size
+            `margin` by default; pass explicitly if `initialize` was called with a halo.
+        margin: Half-width (pixels) of the band scanned on each side of a seam line for
+            candidate split-label pairs. Defaults to `max(halo)` (at least 16) when not given.
+        min_run: Minimum contiguous run length (pixels) of the same 2-label pair along a
+            seam band to treat as a split rather than coincidental cell-to-cell proximity.
+        max_offset_spread: Maximum allowed variation (pixels) in the transition's distance
+            from the seam across a run — enforces that the split boundary is actually straight
+            and seam-aligned, not an organic curved cell-cell contact.
+
+    Returns:
+        Masks with seam-split instances merged back into a single label (labels unchanged
+        for anything not connected to a seam split).
+    """
+    if margin is None:
+        margin = max(16, *halo) if halo else 16
+
+    if masks.max() == 0:
+        return masks
+
+    parent = {int(label): int(label) for label in np.unique(masks) if label != 0}
+
+    def find(x: int) -> int:
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    def union(a: int, b: int) -> None:
+        root_a, root_b = find(a), find(b)
+        if root_a != root_b:
+            parent[root_a] = root_b
+
+    height, width = masks.shape
+    for seam in range(tile_shape[0], height, tile_shape[0]):
+        lo, hi = max(0, seam - margin), min(height, seam + margin)
+        _merge_along_seam_band(masks[lo:hi, :], seam - lo, min_run, max_offset_spread, union)
+    for seam in range(tile_shape[1], width, tile_shape[1]):
+        lo, hi = max(0, seam - margin), min(width, seam + margin)
+        _merge_along_seam_band(masks[:, lo:hi].T, seam - lo, min_run, max_offset_spread, union)
+
+    roots = {label: find(label) for label in parent}
+    if all(root == label for label, root in roots.items()):
+        return masks
+
+    merged = masks.copy()
+    for label, root in roots.items():
+        if root != label:
+            merged[masks == label] = root
+    return merged
+
+
 def segment_image(
     image: np.ndarray,
     predictor,
@@ -173,6 +372,10 @@ def segment_image(
     halo: Optional[Tuple[int, int]] = None,
     generate_kwargs: Optional[Dict[str, Any]] = None,
     channel_index: int = 0,
+    normalize: bool = True,
+    normalize_lower_percentile: float = 1.0,
+    normalize_upper_percentile: float = 99.5,
+    invert: bool = False,
 ) -> np.ndarray:
     """Run instance segmentation on a single image.
 
@@ -186,6 +389,13 @@ def segment_image(
         generate_kwargs: Optional parameters for generate() method (decoder thresholds)
         channel_index: Index of the channel to select from multi-channel patches.
             Default: 0 (first channel).
+        normalize: Apply the same percentile normalization used during training before
+            segmentation. Must match training settings, otherwise the model sees a
+            different input distribution than it was trained on.
+        normalize_lower_percentile: Lower percentile for intensity clipping.
+        normalize_upper_percentile: Upper percentile for intensity clipping.
+        invert: Invert intensities after normalization. Must match training settings
+            (e.g. for dark-foreground brightfield images).
 
     Returns:
         Instance segmentation masks as 2D numpy array with integer labels
@@ -193,16 +403,26 @@ def segment_image(
     generate_kwargs = generate_kwargs or {}
     image = _to_2d(image, channel_index=channel_index)
 
-    if isinstance(segmenter, InstanceSegmentationWithDecoder) and not use_amg:
-        # Decoder-based segmentation: use initialize + generate pattern
-        segmenter.initialize(image)
-        predictions = segmenter.generate(**generate_kwargs)
+    if normalize:
+        image = PercentileNormalizer(
+            normalize_lower_percentile, normalize_upper_percentile, invert=invert
+        )(image)
 
-        # Convert predictions (list of dicts) to label image
-        masks = np.zeros(image.shape, dtype=np.uint32)
-        for idx, pred in enumerate(predictions, start=1):
-            mask = pred["segmentation"]
-            masks[mask > 0] = idx
+    if isinstance(segmenter, InstanceSegmentationWithDecoder) and not use_amg:
+        # generate() returns a 2D integer label array directly (output_mode="instance_segmentation")
+        # Without tile_shape, initialize() feeds the whole image through SAM's encoder, which
+        # resizes the longest side to 1024px — for images much larger than the training patch
+        # size, this shrinks objects far below the scale the decoder was trained on. Tiling
+        # keeps each tile near the encoder's native resolution instead. Only works if `segmenter`
+        # was built with `is_tiled=True` (see load_model_with_decoder) — the whole-image
+        # InstanceSegmentationWithDecoder.initialize() doesn't accept tile_shape/halo at all.
+        if tile_shape is not None:
+            segmenter.initialize(image, tile_shape=tile_shape, halo=halo or (0, 0))
+        else:
+            segmenter.initialize(image)
+        masks = segmenter.generate(**generate_kwargs)
+        if tile_shape is not None:
+            masks = _merge_tile_seam_splits(masks, tile_shape, halo=halo or (0, 0))
     else:
         # AMG-based segmentation: use automatic_instance_segmentation
         masks = automatic_instance_segmentation(

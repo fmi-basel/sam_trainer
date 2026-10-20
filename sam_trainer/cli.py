@@ -18,7 +18,7 @@ from sam_trainer.config import (
     TrainingConfig,
 )
 from sam_trainer.embeddings import run_embeddings_extraction
-from sam_trainer.training import run_training
+from sam_trainer.training import export_best_checkpoint, run_training
 
 app = typer.Typer(
     name="sam-trainer",
@@ -159,6 +159,11 @@ def config(
             "Upper percentile for clipping", type=float, default=99.5
         )
 
+    invert_inputs = typer.confirm(
+        "Invert intensities after normalization (dark-foreground/brightfield images)?",
+        default=False,
+    )
+
     use_min_instance_sampler = typer.confirm(
         "Use foreground-aware sampling (MinInstanceSampler)?", default=True
     )
@@ -198,6 +203,7 @@ def config(
         normalize_inputs=normalize_inputs,
         normalize_lower_percentile=lower_pct,
         normalize_upper_percentile=upper_pct,
+        invert_inputs=invert_inputs,
         use_min_instance_sampler=use_min_instance_sampler,
         min_instances_per_patch=min_instances_per_patch,
         min_instance_size=min_instance_size,
@@ -283,6 +289,7 @@ def train(
             )
         except Exception as e:
             console.print(f"[bold red]Error during augmentation:[/bold red] {e}")
+            console.print_exception()
             raise typer.Exit(1)
     else:
         console.print("[dim]Skipping augmentation[/dim]")
@@ -295,6 +302,20 @@ def train(
         console.print(f"Exported model: {results['exported_model']}")
     except Exception as e:
         console.print(f"[bold red]Error during training:[/bold red] {e}")
+        console.print_exception()
+        # Best-effort recovery: training crashed, but if it got far enough to write
+        # a checkpoint, export it anyway so the run isn't a total loss and doesn't
+        # require a separate manual re-export step to become usable for inference.
+        try:
+            export_path = export_best_checkpoint(config.training, experiment_dir)
+            console.print(
+                f"[yellow]Training did not finish, but exported the best available "
+                f"checkpoint anyway:[/yellow] {export_path}"
+            )
+        except Exception as export_error:
+            console.print(
+                f"[dim]Could not export a checkpoint after the failure: {export_error}[/dim]"
+            )
         raise typer.Exit(1)
 
 
@@ -353,6 +374,7 @@ def augment(
         )
     except Exception as e:
         console.print(f"[bold red]Error:[/bold red] {e}")
+        console.print_exception()
         raise typer.Exit(1)
 
 
@@ -401,6 +423,7 @@ def embeddings(
         results = run_embeddings_extraction(config)
     except Exception as e:
         console.print(f"[bold red]Error during embedding extraction:[/bold red] {e}")
+        console.print_exception()
         raise typer.Exit(1)
 
     console.print("\n[bold green]✓ Embedding extraction complete![/bold green]")

@@ -71,39 +71,29 @@ def save_prediction_overlay(
     plt.close(fig)
 
 
-def run_inference_on_image(image: np.ndarray, predictor, segmenter) -> np.ndarray:
+def run_inference_on_image(
+    image: np.ndarray,
+    predictor,
+    segmenter,
+    normalize_kwargs: dict | None = None,
+) -> np.ndarray:
     """Run inference on a single image.
 
     Args:
         image: Input image (2D grayscale)
         predictor: SAM predictor
         segmenter: Instance segmenter (InstanceSegmentationWithDecoder or AMG)
+        normalize_kwargs: Normalization options forwarded to segment_image
+            (normalize_lower_percentile, normalize_upper_percentile, invert)
 
     Returns:
         Instance segmentation masks
     """
-    from micro_sam.instance_segmentation import InstanceSegmentationWithDecoder
+    from sam_trainer.utils.inference_utils import segment_image
 
-    if isinstance(segmenter, InstanceSegmentationWithDecoder):
-        # Decoder-based segmentation
-        segmenter.initialize(image)
-        predictions = segmenter.generate(image)
-        masks = np.zeros(image.shape, dtype=np.uint16)
-        for idx, pred in enumerate(predictions, start=1):
-            mask = pred["segmentation"]
-            masks[mask > 0] = idx
-    else:
-        # AMG-based segmentation
-        from micro_sam.automatic_segmentation import automatic_instance_segmentation
-
-        masks = automatic_instance_segmentation(
-            predictor=predictor,
-            segmenter=segmenter,
-            input_path=image,
-            ndim=2,
-        )
-
-    return masks
+    # Shared with the inference scripts: generate() returns a 2D label array directly,
+    # and normalization matches training (set via normalize_kwargs).
+    return segment_image(image, predictor, segmenter, **(normalize_kwargs or {}))
 
 
 def save_validation_predictions(
@@ -113,6 +103,7 @@ def save_validation_predictions(
     output_dir: Path,
     epoch: int,
     max_samples: int = 5,
+    normalize_kwargs: dict | None = None,
 ) -> None:
     """Run inference on validation images and save visualizations.
 
@@ -141,7 +132,9 @@ def save_validation_predictions(
                 image = image[0]  # Take first slice if 3D
 
             # Run prediction
-            masks = run_inference_on_image(image, predictor, segmenter)
+            masks = run_inference_on_image(
+                image, predictor, segmenter, normalize_kwargs
+            )
 
             # Save visualization
             output_path = pred_dir / f"{img_path.stem}_overlay.png"

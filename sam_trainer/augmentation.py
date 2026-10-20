@@ -71,18 +71,20 @@ def create_augmentation_pipeline(config: AugmentationConfig) -> Compose:
     # Blur and noise
     if config.gaussian_blur_prob > 0:
         transforms.append(
-            A.GaussianBlur(blur_limit=(3, 11), p=config.gaussian_blur_prob)
+            A.GaussianBlur(
+                blur_limit=config.gaussian_blur_limit, p=config.gaussian_blur_prob
+            )
         )
 
-        # Add noise using multiplicative approach (works better with uint16)
-        if config.gaussian_noise_prob > 0:
-            transforms.append(
-                A.MultiplicativeNoise(
-                    multiplier=(0.95, 1.05), p=config.gaussian_noise_prob
-                )
+    # Add noise using multiplicative approach (works better with uint16)
+    if config.gaussian_noise_prob > 0:
+        transforms.append(
+            A.MultiplicativeNoise(
+                multiplier=config.noise_multiplier_range, p=config.gaussian_noise_prob
             )
+        )
 
-        # Brightness and contrast (extremely light adjustments to avoid darkening uint16 images)
+    # Brightness and contrast (extremely light adjustments to avoid darkening uint16 images)
     if config.brightness_contrast:
         transforms.append(
             A.RandomBrightnessContrast(
@@ -267,8 +269,13 @@ def run_augmentation(config: AugmentationConfig) -> dict[str, int]:
         else:
             output_fmt = config.output_format
 
-        # Save original (if requested)
+        # Skip pairs with empty labels
         base_name = img_path.stem
+        if label.max() == 0:
+            logger.debug(f"Skipping {img_path.name}: empty label mask")
+            continue
+
+        # Save original (if requested)
         if config.include_original:
             write_image(image, output_images_dir / f"{base_name}_orig", output_fmt)
             write_image(label, output_labels_dir / f"{base_name}_orig", output_fmt)
@@ -281,6 +288,9 @@ def run_augmentation(config: AugmentationConfig) -> dict[str, int]:
             )
 
             for aug_idx, (aug_img, aug_label) in enumerate(zip(aug_images, aug_labels)):
+                if aug_label.max() == 0:
+                    logger.debug(f"Skipping {base_name}_aug{aug_idx:03d}: empty label after augmentation")
+                    continue
                 write_image(
                     aug_img,
                     output_images_dir / f"{base_name}_aug{aug_idx:03d}",

@@ -14,7 +14,6 @@ training:
   batch_size: 6  # Increased from 1 - plenty of GPU memory available
   n_epochs: 200  # Longer training since we see each image once per epoch
   n_samples: null  # null = use actual dataset size (all images, no random sampling)
-  num_workers: 0  # Set to 0 for debugging on Windows to avoid timeouts
   learning_rate: 1.0e-5
   early_stopping: 25  # Allow 50 epochs without improvement before stopping
   # Zarr mode doesn't use val_split (data is pre-split)

@@ -46,8 +46,16 @@ class AugmentationConfig(BaseModel):
     gaussian_blur_prob: float = Field(
         default=0.3, ge=0, le=1, description="Probability of applying Gaussian blur"
     )
+    gaussian_blur_limit: tuple[int, int] = Field(
+        default=(3, 11),
+        description="Min/max Gaussian blur kernel size (both must be odd)",
+    )
     gaussian_noise_prob: float = Field(
         default=0.3, ge=0, le=1, description="Probability of adding Gaussian noise"
+    )
+    noise_multiplier_range: tuple[float, float] = Field(
+        default=(0.95, 1.05),
+        description="Min/max multiplicative noise factor applied per-pixel",
     )
     brightness_contrast: bool = Field(
         default=True, description="Apply random brightness/contrast adjustments"
@@ -109,16 +117,11 @@ class TrainingConfig(BaseModel):
         ge=1,
         description="Number of random patches per image per epoch (None=auto, typically 16)",
     )
-    num_workers: int = Field(
-        default=4,
-        ge=0,
-        description="Number of dataloader workers for parallel data loading (0=single-threaded)",
-    )
     learning_rate: float = Field(default=1e-5, gt=0, description="Learning rate")
-    early_stopping: int = Field(
+    early_stopping: Optional[int] = Field(
         default=10,
         ge=1,
-        description="Early stopping patience: number of epochs without improvement before stopping",
+        description="Early stopping patience; set to null to disable",
     )
     val_split: float = Field(
         default=0.1, gt=0, lt=1, description="Validation split ratio"
@@ -151,6 +154,11 @@ class TrainingConfig(BaseModel):
         le=100,
         description="Upper percentile for intensity clipping",
     )
+    invert_inputs: bool = Field(
+        default=False,
+        description="Invert intensities after normalization (for dark-foreground images, "
+        "e.g. brightfield min-intensity projections)",
+    )
     use_min_instance_sampler: bool = Field(
         default=True,
         description="Use a MinInstanceSampler to ensure patches contain foreground instances",
@@ -158,7 +166,9 @@ class TrainingConfig(BaseModel):
     min_instances_per_patch: int = Field(
         default=2,
         ge=1,
-        description="Minimum number of distinct instances required per sampled patch",
+        description="Minimum number of distinct label values required per sampled patch, "
+        "INCLUDING background (0). Must be >=2 to actually guarantee >=1 real foreground "
+        "instance; 1 is a no-op filter that accepts all-background or all-foreground patches.",
     )
     min_instance_size: int = Field(
         default=25,

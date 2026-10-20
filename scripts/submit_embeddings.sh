@@ -85,6 +85,10 @@ export PIXI_CACHE_DIR="$WD/infrastructure/apps/pixi/.pixi_cache"
 export TMPDIR="$WD/infrastructure/.tmp_$USER"
 mkdir -p "$TMPDIR"
 
+# micro_sam pretrained weights live in a shared cache (default ~/.cache is quota-limited).
+export MICROSAM_CACHEDIR="/tachyon/groups/scratch/gmicro/khosnikl/microsam_models_cache"
+
+
 PIXIBIN="$WD/infrastructure/apps/pixi/bin/pixi"
 if command -v pixi >/dev/null 2>&1; then
     PIXI_CMD="pixi"

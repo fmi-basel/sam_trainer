@@ -2,10 +2,13 @@
 
 import logging
 import random
+import re
 from pathlib import Path
 from typing import Optional
 
+import cv2
 import numpy as np
+import skimage.measure
 import torch
 from micro_sam.training import (
     default_sam_loader,
@@ -13,10 +16,12 @@ from micro_sam.training import (
     train_instance_segmentation,
     train_sam,
 )
+from micro_sam.util import export_custom_sam_model
 from torch_em.data import MinInstanceSampler
 
 from sam_trainer.config import TrainingConfig
-from sam_trainer.io import get_image_paths
+from sam_trainer.io import get_image_paths, read_image
+from sam_trainer.utils.normalization import PercentileNormalizer
 from sam_trainer.visualization import (
     create_predictor_and_segmenter,
     save_prediction_overlay,
@@ -24,6 +29,12 @@ from sam_trainer.visualization import (
 )
 
 logger = logging.getLogger(__name__)
+
+# OpenCV's internal thread pool corrupts DataLoader worker processes forked
+# after it starts (glibc "free(): corrupted unsorted chunks" / "double free"
+# aborts). Disabling it here, before any DataLoader is constructed, avoids
+# the race.
+cv2.setNumThreads(0)
 
 
 def check_and_visualize_batch(loader, output_dir: Path, name: str):
@@ -94,34 +105,6 @@ def check_and_visualize_batch(loader, output_dir: Path, name: str):
         logger.error(f"Failed to check/visualize {name} batch: {e}")
 
 
-class PercentileNormalizer:
-    def __init__(self, lower: float, upper: float):
-        self.lower = lower
-        self.upper = upper
-
-    def __call__(self, raw):
-        arr = np.asarray(raw, dtype=np.float32)
-
-        # Robust normalization: Calculate percentiles only on non-padded (non-zero) pixels
-        # to avoid skewing contrast due to zero-padding.
-        mask = arr > 0
-        if mask.any():
-            lo, hi = np.percentile(arr[mask], [self.lower, self.upper])
-        else:
-            # Fallback if image is all zeros
-            lo, hi = np.percentile(arr, [self.lower, self.upper])
-
-        if hi <= lo:
-            lo = float(arr.min())
-            hi = float(arr.max())
-            if hi == lo:
-                hi = lo + 1.0
-        arr = np.clip(arr, lo, hi)
-        arr = (arr - lo) / (hi - lo)
-        arr = (arr * 255.0).astype(np.uint8)
-        return arr
-
-
 def _build_raw_transform(config: TrainingConfig):
     if not config.normalize_inputs:
         return None
@@ -129,12 +112,46 @@ def _build_raw_transform(config: TrainingConfig):
     lower = config.normalize_lower_percentile
     upper = config.normalize_upper_percentile
     logger.info(
-        "Applying percentile normalization (lower=%.2f, upper=%.2f)",
+        "Applying percentile normalization (lower=%.2f, upper=%.2f, invert=%s)",
         lower,
         upper,
+        config.invert_inputs,
     )
 
-    return PercentileNormalizer(lower, upper)
+    return PercentileNormalizer(lower, upper, invert=config.invert_inputs)
+
+
+def _split_disconnected_instances(label_patch: np.ndarray) -> np.ndarray:
+    """Split each instance ID into its connected components within the patch.
+
+    ``MinInstanceSampler`` counts total pixels per raw instance ID, but
+    ``PerObjectDistanceTransform(apply_label=True)`` (used downstream for the
+    decoder target) relabels connected components *first* and then drops
+    components under ``min_size``. For touching/adjacent organoids, a crop can
+    slice a single instance into several disconnected pieces that individually
+    fall under ``min_size`` even though the raw ID's total pixel count passed
+    the sampler, leaving zero valid objects for the transform and crashing
+    ``segmentation_to_one_hot`` deep in training. Applying the same splitting
+    before the sampler runs makes its accept/reject decision match what the
+    transform will actually keep.
+    """
+    return skimage.measure.label(label_patch).astype(label_patch.dtype)
+
+
+_AUG_SUFFIX_RE = re.compile(r"_(?:aug\d+|orig)$")
+_SLICE_RE = re.compile(r"^(.*)_slice\d+")
+
+
+def stack_id(path: Path) -> str:
+    """Recover the source-stack identity of a (possibly augmented, possibly
+    sliced) tile filename, e.g. ``mip_164_0_z000_slice0007_aug003.tif`` ->
+    ``mip_164_0_z000``. Falls back to the bare stem for filenames that don't
+    follow the slice/augmentation naming convention, so each such file is
+    treated as its own group.
+    """
+    stem = _AUG_SUFFIX_RE.sub("", path.stem)
+    match = _SLICE_RE.match(stem)
+    return match.group(1) if match else stem
 
 
 def prepare_data_splits(
@@ -145,12 +162,18 @@ def prepare_data_splits(
     shuffle: bool = True,
     seed: Optional[int] = None,
 ) -> tuple[list[Path], list[Path], list[Path], list[Path]]:
-    """Prepare train/validation splits from data directories.
+    """Prepare train/validation splits from data directories, grouped by source stack.
+
+    Splitting is done at the source-stack level (not per tile) so that
+    augmented variants and adjacent z-slices of the same stack never end up
+    split across train and val — that leakage makes val loss measure
+    near-duplicate recognition rather than generalization.
 
     Args:
         images_dir: Directory containing training images
         labels_dir: Directory containing label masks
-        val_split: Fraction of data to use for validation
+        val_split: Approximate fraction of tiles to use for validation (exact
+            split may overshoot slightly since whole stacks are assigned atomically)
 
     Returns:
         Tuple of (train_images, train_labels, val_images, val_labels)
@@ -166,25 +189,48 @@ def prepare_data_splits(
     if len(image_paths) == 0:
         raise ValueError(f"No images found in {images_dir}")
 
-    # Calculate split index
+    # Drop pairs whose label has no foreground at all. A patch with zero
+    # foreground pixels can never satisfy MinInstanceSampler(min_instances=1),
+    # which crashes training with "No foreground objects were found." when
+    # patch_shape equals the full image shape (no room to crop elsewhere).
+    non_empty = [i for i, p in enumerate(label_paths) if read_image(p).max() > 0]
+    if len(non_empty) < len(label_paths):
+        logger.warning(
+            f"Dropping {len(label_paths) - len(non_empty)} image/label pairs "
+            "with empty label masks (no foreground)"
+        )
+        image_paths = [image_paths[i] for i in non_empty]
+        label_paths = [label_paths[i] for i in non_empty]
+
     n_total = len(image_paths)
-    n_val = max(1, int(n_total * val_split))
-    n_train = n_total - n_val
+    n_val_target = max(1, int(n_total * val_split))
 
-    logger.info(f"Total samples: {n_total}, Train: {n_train}, Val: {n_val}")
+    groups: dict[str, list[int]] = {}
+    for i, path in enumerate(image_paths):
+        groups.setdefault(stack_id(path), []).append(i)
 
-    indices = list(range(n_total))
+    group_ids = list(groups.keys())
     if shuffle:
         rng = random.Random(seed)
-        rng.shuffle(indices)
+        rng.shuffle(group_ids)
 
-    shuffled_images = [image_paths[i] for i in indices]
-    shuffled_labels = [label_paths[i] for i in indices]
+    val_indices: list[int] = []
+    train_indices: list[int] = []
+    for group in group_ids:
+        if len(val_indices) < n_val_target:
+            val_indices.extend(groups[group])
+        else:
+            train_indices.extend(groups[group])
 
-    train_images = shuffled_images[:n_train]
-    train_labels = shuffled_labels[:n_train]
-    val_images = shuffled_images[n_train:]
-    val_labels = shuffled_labels[n_train:]
+    logger.info(
+        f"Total samples: {n_total}, Train: {len(train_indices)}, "
+        f"Val: {len(val_indices)} ({len(groups)} source stacks)"
+    )
+
+    train_images = [image_paths[i] for i in train_indices]
+    train_labels = [label_paths[i] for i in train_indices]
+    val_images = [image_paths[i] for i in val_indices]
+    val_labels = [label_paths[i] for i in val_indices]
 
     return train_images, train_labels, val_images, val_labels
 
@@ -209,7 +255,6 @@ def run_training(config: TrainingConfig, output_dir: Path) -> dict[str, Path]:
     logger.info(f"Learning rate: {config.learning_rate:.2e}")
     logger.info(f"Early stopping after: {config.early_stopping} epochs")
     logger.info(f"Validation split: {config.val_split:.2f}")
-    logger.info(f"Number of workers: {config.num_workers}")
 
     # Check for GPU
     device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -220,29 +265,41 @@ def run_training(config: TrainingConfig, output_dir: Path) -> dict[str, Path]:
 
     # Create data loaders
     logger.info("Creating data loaders...")
-    logger.info(f"Using {config.num_workers} dataloader workers")
 
     raw_transform = _build_raw_transform(config)
     if config.use_min_instance_sampler:
+        effective_min_size = config.min_instance_size
         train_sampler = MinInstanceSampler(
             config.min_instances_per_patch,
-            min_size=config.min_instance_size,
+            min_size=effective_min_size,
         )
         val_sampler = MinInstanceSampler(
             config.min_instances_per_patch,
-            min_size=config.min_instance_size,
+            min_size=effective_min_size,
         )
         logger.info(
             "Using MinInstanceSampler (min_instances=%s, min_size=%s) for both train and validation",
             config.min_instances_per_patch,
-            config.min_instance_size,
+            effective_min_size,
         )
     else:
         # micro_sam's default_sam_dataset injects MinInstanceSampler(2, min_size=25) when sampler=None.
-        # Pass a trivial sampler to suppress that behaviour and accept all patches.
-        train_sampler = lambda raw, labels: True  # noqa: E731
-        val_sampler = lambda raw, labels: True  # noqa: E731
-        logger.info("Sampler disabled: accepting all patches")
+        # Pass a minimal sampler to suppress that behaviour while still filtering empty patches.
+        # min_num_instances=2, not 1: MinInstanceSampler counts *all* distinct label values,
+        # including background (0), so min_num_instances=1 accepts any patch (even all-background
+        # or all-foreground-with-no-background ones) and is a no-op filter. 2 is the minimum that
+        # actually requires background + >=1 real instance in the patch, which micro_sam's own
+        # downstream prompt code (np.unique(gt)[1:], assuming index 0 is background) depends on.
+        # min_size=25 (not 1) to match default_sam_dataset's own default for the same argument
+        # (see below) - the sampler's threshold and the decoder label transform's threshold must
+        # agree, otherwise a patch can pass the sampler on a <25px foreground sliver that then
+        # gets dropped by the label transform, landing back at zero foreground pixels.
+        effective_min_size = 25
+        train_sampler = MinInstanceSampler(2, min_size=effective_min_size)
+        val_sampler = MinInstanceSampler(2, min_size=effective_min_size)
+        logger.info(
+            "Using permissive MinInstanceSampler (min_instances=2, min_size=%s)", effective_min_size
+        )
 
     loader_kwargs = {
         "batch_size": config.batch_size,
@@ -250,8 +307,23 @@ def run_training(config: TrainingConfig, output_dir: Path) -> dict[str, Path]:
         "with_segmentation_decoder": True,
         "train_instance_segmentation_only": config.train_instance_segmentation_only,
         "n_samples": config.n_samples,
-        "num_workers": config.num_workers,
+        # Hardcoded, not user-configurable: num_workers > 0 forks OpenCV's internal thread
+        # pool into DataLoader worker processes and reliably corrupts the heap under load
+        # (glibc "corrupted size vs. prev_size" / "double free"), sooner or later depending
+        # on timing. cv2.setNumThreads(0) alone only delays the crash, it doesn't prevent it.
+        # See SAM Trainer Dev Log 2026-07-03 and 2026-09-25 for two confirmed occurrences.
+        "num_workers": 0,
         "raw_transform": raw_transform,
+        # default_sam_dataset uses this to build its own label transform (e.g.
+        # PerObjectDistanceTransform for full-SAM decoder training), independently of the
+        # sampler above. Must match the sampler's min_size or a patch that passes the sampler
+        # can still end up with zero foreground after the label transform filters it out.
+        "min_size": effective_min_size,
+        # Applied to the raw label crop before the sampler above validates it, so the
+        # sampler's instance/size count matches what PerObjectDistanceTransform will later
+        # keep (see _split_disconnected_instances docstring for why these can otherwise
+        # disagree and crash training).
+        "pre_label_transform": _split_disconnected_instances,
     }
 
     # Check mode and create appropriate loaders
@@ -362,7 +434,14 @@ def run_training(config: TrainingConfig, output_dir: Path) -> dict[str, Path]:
 
     if config.resume_from_checkpoint is not None:
         logger.info(f"Resuming from checkpoint: {config.resume_from_checkpoint}")
-        base_kwargs["checkpoint_path"] = str(config.resume_from_checkpoint)
+        if config.train_instance_segmentation_only:
+            # train_instance_segmentation uses checkpoint_path only for SAM encoder init,
+            # not for resuming the UNETR decoder. Resume is handled by DefaultTrainer
+            # automatically when overwrite_training=False (it finds the checkpoint via
+            # save_root + checkpoint_name).
+            base_kwargs["overwrite_training"] = False
+        else:
+            base_kwargs["checkpoint_path"] = str(config.resume_from_checkpoint)
 
     # Run training
     logger.debug(
@@ -413,11 +492,33 @@ def run_training(config: TrainingConfig, output_dir: Path) -> dict[str, Path]:
                     output_dir=output_dir,
                     epoch=config.n_epochs,
                     max_samples=20,
+                    normalize_kwargs={
+                        "normalize_lower_percentile": config.normalize_lower_percentile,
+                        "normalize_upper_percentile": config.normalize_upper_percentile,
+                        "invert": config.invert_inputs,
+                    },
                 )
         except Exception as e:
             logger.warning(f"Failed to save final validation predictions: {e}")
 
-    # Export model
+    export_path = export_best_checkpoint(config, output_dir)
+    logger.info("Training complete!")
+
+    return {
+        "checkpoint": checkpoint_dir / "best.pt",
+        "exported_model": export_path,
+        "checkpoint_dir": checkpoint_dir,
+    }
+
+
+def export_best_checkpoint(config: TrainingConfig, output_dir: Path) -> Path:
+    """Export the best (or latest available) checkpoint to a lean, portable model file.
+
+    Safe to call even if training did not finish (e.g. crashed mid-run) as long as
+    at least one checkpoint was written - this is what makes crashed runs still
+    recoverable without a separate manual re-export step.
+    """
+    checkpoint_dir = output_dir / "checkpoints" / config.checkpoint_name
     best_checkpoint = checkpoint_dir / "best.pt"
     if not best_checkpoint.exists():
         logger.warning(f"Best checkpoint not found at {best_checkpoint}")
@@ -438,14 +539,30 @@ def run_training(config: TrainingConfig, output_dir: Path) -> dict[str, Path]:
     export_path.parent.mkdir(parents=True, exist_ok=True)
 
     logger.info(f"Exporting model to {export_path}...")
-    export_instance_segmentation_model(
-        str(best_checkpoint), str(export_path), config.model_type
-    )
+    if config.train_instance_segmentation_only:
+        export_instance_segmentation_model(
+            str(best_checkpoint), str(export_path), config.model_type
+        )
+    else:
+        export_custom_sam_model(
+            checkpoint_path=str(best_checkpoint),
+            model_type=config.model_type,
+            save_path=str(export_path),
+            with_segmentation_decoder=True,
+        )
 
-    logger.info("Training complete!")
+    # Guard against regressing to a bloated, non-portable export (this happened once
+    # before, see commit eeff18e): the exported file must contain only plain tensors
+    # under model_state/decoder_state, never optimizer/scheduler state or dataset
+    # objects, so it can be loaded with stock micro_sam APIs in environments that
+    # don't have sam_trainer installed.
+    exported_keys = set(torch.load(export_path, map_location="cpu", weights_only=False))
+    unexpected_keys = exported_keys - {"model_state", "decoder_state"}
+    if unexpected_keys:
+        raise RuntimeError(
+            f"Exported model at {export_path} has unexpected top-level keys "
+            f"{sorted(unexpected_keys)} beyond {{'model_state', 'decoder_state'}}; "
+            "it would not load with stock micro_sam APIs outside this environment."
+        )
 
-    return {
-        "checkpoint": best_checkpoint,
-        "exported_model": export_path,
-        "checkpoint_dir": checkpoint_dir,
-    }
+    return export_path

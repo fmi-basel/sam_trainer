@@ -27,6 +27,13 @@ function display_memory_usage() {
 
 trap display_memory_usage EXIT
 
+# Activate pixi environment (cluster-compatible bootstrap used by other scripts).
+WD="$(pwd)"
+export PATH="$PATH:$WD/infrastructure/apps/pixi/bin"
+export PIXI_CACHE_DIR="$WD/infrastructure/apps/pixi/.pixi_cache"
+export TMPDIR="$WD/infrastructure/.tmp_$USER"
+mkdir -p "$TMPDIR"
+
 START=$(date +%s)
 STARTDATE=$(date -Iseconds)
 echo "[INFO] [$STARTDATE] [$$] Starting SLURM job $SLURM_JOB_ID"
@@ -53,8 +60,16 @@ echo "[INFO] [$STARTDATE] [$$] Using config: $CONFIG_PATH"
 export OMP_NUM_THREADS=${OMP_NUM_THREADS:-8}
 export MKL_NUM_THREADS=${MKL_NUM_THREADS:-8}
 
+# tqdm writes one line per \r update; since stderr is redirected to a file
+# (not a TTY) these don't overwrite in place and bloat the log. Throttle to
+# one line per 30s of wall time instead.
+export TQDM_MININTERVAL=${TQDM_MININTERVAL:-30}
+
 # Run training
 echo "[INFO] [$STARTDATE] [$$] Starting SAM training on A100..."
+# micro_sam pretrained weights live in a shared cache (default ~/.cache is quota-limited).
+export MICROSAM_CACHEDIR="/tachyon/groups/scratch/gmicro/khosnikl/microsam_models_cache"
+
 pixi run -e gpu python -m sam_trainer.cli train --config "$CONFIG_PATH" -v
 
 # Move logs to output directory
