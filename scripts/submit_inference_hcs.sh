@@ -9,7 +9,7 @@
 #SBATCH --mem=32G
 #SBATCH --gres=gpu:1
 #SBATCH --partition=main,several
-#SBATCH --time=16:00:00
+#SBATCH --time=56:00:00
 
 # USAGE:
 # 1. To submit a SINGLE plate:
@@ -61,6 +61,9 @@ fi
 
 # Ensure environment is properly installed
 echo "[INFO] Ensuring GPU environment is ready..."
+# micro_sam pretrained weights live in a shared cache (default ~/.cache is quota-limited).
+export MICROSAM_CACHEDIR="/tachyon/groups/scratch/gmicro/khosnikl/microsam_models_cache"
+
 pixi install -e gpu
 
 echo "[INFO] Using Pixi GPU environment"

@@ -67,6 +67,9 @@ export TQDM_MININTERVAL=${TQDM_MININTERVAL:-30}
 
 # Run training
 echo "[INFO] [$STARTDATE] [$$] Starting SAM training on A100..."
+# micro_sam pretrained weights live in a shared cache (default ~/.cache is quota-limited).
+export MICROSAM_CACHEDIR="/tachyon/groups/scratch/gmicro/khosnikl/microsam_models_cache"
+
 pixi run -e gpu python -m sam_trainer.cli train --config "$CONFIG_PATH" -v
 
 # Move logs to output directory

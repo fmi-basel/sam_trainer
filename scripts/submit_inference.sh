@@ -50,6 +50,9 @@ fi
 
 # Ensure environment is properly installed
 echo "[INFO] Ensuring GPU environment is ready..."
+# micro_sam pretrained weights live in a shared cache (default ~/.cache is quota-limited).
+export MICROSAM_CACHEDIR="/tachyon/groups/scratch/gmicro/khosnikl/microsam_models_cache"
+
 pixi install -e gpu
 
 echo "[INFO] Using Pixi GPU environment"

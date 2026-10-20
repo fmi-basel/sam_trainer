@@ -24,6 +24,9 @@ export PIXI_CACHE_DIR="$WD/infrastructure/apps/pixi/.pixi_cache"
 export TMPDIR="$WD/infrastructure/.tmp_$USER"
 mkdir -p "$TMPDIR"
 
+# micro_sam pretrained weights live in a shared cache (default ~/.cache is quota-limited).
+export MICROSAM_CACHEDIR="/tachyon/groups/scratch/gmicro/khosnikl/microsam_models_cache"
+
 
 START=$(date +%s)
 STARTDATE=$(date -Iseconds)
@@ -47,9 +50,16 @@ fi
 
 echo "[INFO] [$STARTDATE] [$$] Using config: $CONFIG_PATH"
 
-# Set threading for optimal CPU usage with 20 cores
-export OMP_NUM_THREADS=${OMP_NUM_THREADS:-8}
-export MKL_NUM_THREADS=${MKL_NUM_THREADS:-8}
+# Pinned to 1: OMP_NUM_THREADS=8/MKL_NUM_THREADS=8 was live during a
+# glibc heap-corruption crash (free(): corrupted unsorted chunks, job 52733,
+# 2026-09-29) even with num_workers=0 (no DataLoader forking). Testing
+# whether concurrent multi-threaded native code (BLAS/OpenMP racing with
+# OpenCV/PyTorch's own thread pool) in-process is the real root cause, not
+# the fork-based one from the earlier (incomplete) fix. See SAM Trainer Dev
+# Log / project_slurm_heap_corruption memory.
+export OMP_NUM_THREADS=${OMP_NUM_THREADS:-1}
+export MKL_NUM_THREADS=${MKL_NUM_THREADS:-1}
+export OPENBLAS_NUM_THREADS=${OPENBLAS_NUM_THREADS:-1}
 
 # tqdm writes one line per \r update; since stderr is redirected to a file
 # (not a TTY) these don't overwrite in place and bloat the log. Throttle to
