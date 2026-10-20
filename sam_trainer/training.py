@@ -492,6 +492,11 @@ def run_training(config: TrainingConfig, output_dir: Path) -> dict[str, Path]:
                     output_dir=output_dir,
                     epoch=config.n_epochs,
                     max_samples=20,
+                    normalize_kwargs={
+                        "normalize_lower_percentile": config.normalize_lower_percentile,
+                        "normalize_upper_percentile": config.normalize_upper_percentile,
+                        "invert": config.invert_inputs,
+                    },
                 )
         except Exception as e:
             logger.warning(f"Failed to save final validation predictions: {e}")
