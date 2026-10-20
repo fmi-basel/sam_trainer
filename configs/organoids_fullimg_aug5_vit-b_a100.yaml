@@ -1,0 +1,31 @@
+experiment_name: "organoids_turco_fullimg_aug5"
+output_base_dir: "runs"
+# Reuses the 5x augmented set generated for organoids_touching_aug5 (420 pairs -> 2520 samples,
+# 316 old + 104 new touching-organoid annotations). Same shuffle_seed/val_split as that run, so
+# the held-out stacks are identical and the two runs can be compared on the same images.
+augmentation: null
+training:
+  images_dir: "dat/training_data_aug5/images"
+  labels_dir: "dat/training_data_aug5/labels"
+  model_type: "vit_b_lm"
+  patch_shape: [2048, 2048]  # full image, no cropping (organoid images are 2048x2048)
+  batch_size: 6
+  n_epochs: 100
+  n_samples: null
+  learning_rate: 5.0e-5
+  early_stopping: 20
+  val_split: 0.1
+  shuffle_data: true
+  shuffle_seed: 42
+  train_instance_segmentation_only: false
+  normalize_inputs: true
+  normalize_lower_percentile: 1.0
+  normalize_upper_percentile: 99.5
+  use_min_instance_sampler: false  # full images always contain instances, no patch fragmentation
+  min_instances_per_patch: 1  # unused when the sampler is disabled
+  min_instance_size: 1
+  save_validation_predictions_frequency: 5
+  checkpoint_name: "organoids_turco_fullimg_aug5_ckpt"
+  resume_from_checkpoint: "final_models/organoids_turco_lean.pt"
+  export_path: "runs/organoids_turco_fullimg_aug5/organoids_turco_fullimg_aug5_model.pt"
+log_level: "INFO"
