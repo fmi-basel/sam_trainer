@@ -17,12 +17,16 @@ def get_logger(name: str) -> logging.Logger:
     return logging.getLogger(name)
 
 
-def setup_logging(verbosity: int, console: Console) -> None:
+def setup_logging(
+    verbosity: int, console: Console, message_prefix: str = ""
+) -> None:
     """Configure logging based on verbosity level.
 
     Args:
         verbosity: 0=WARNING, 1=INFO, 2=DEBUG
         console: Optional Rich console instance for logging
+        message_prefix: Text prepended to every log message (e.g. a plate name to tell
+            interleaved parallel workers apart)
     """
     level_map = {0: WARNING, 1: INFO, 2: DEBUG}
     level = level_map.get(verbosity, DEBUG)
@@ -32,7 +36,8 @@ def setup_logging(verbosity: int, console: Console) -> None:
 
     basicConfig(
         level=level,
-        format="%(message)s",
+        format=f"{message_prefix.replace('%', '%%')}%(message)s",
         datefmt="[%X]",
         handlers=[RichHandler(console=console, rich_tracebacks=True)],
+        force=True,
     )

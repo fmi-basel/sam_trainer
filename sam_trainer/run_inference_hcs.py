@@ -12,12 +12,16 @@ Usage:
     python run_inference_hcs.py --input /path/to/plates/ --model model.pt
 """
 
+import importlib
+from functools import lru_cache
 from pathlib import Path
 from typing import Optional, Tuple
 
 import numpy as np
 import torch
 import typer
+from joblib import Parallel, delayed
+from natsort import natsorted
 from ngio import open_ome_zarr_plate
 from ngio.experimental.iterators import SegmentationIterator
 from rich.console import Console
@@ -132,7 +136,7 @@ def process_wells(
     invert: bool = False,
     tile_shape: Optional[Tuple[int, int]] = None,
     halo: Optional[Tuple[int, int]] = None,
-) -> None:
+) -> list[str]:
     """Process all wells in an HCS plate.
 
     Args:
@@ -145,10 +149,14 @@ def process_wells(
         channel: Channel to use. Integer index string or omero channel name. Default: first.
         tile_shape: Tile shape for large well/field images (see process_well).
         halo: Overlap for stitching tiles when `tile_shape` is set.
+
+    Returns:
+        IDs of wells that failed (empty if all wells succeeded).
     """
     wells = list(plate.get_wells().keys())
     console.print(f"[cyan]Found {len(wells)} wells to process[/cyan]")
 
+    failed_wells: list[str] = []
     for well_id in wells:
         try:
             # Get the image for this well (assuming one image per well)
@@ -178,7 +186,24 @@ def process_wells(
         except Exception as e:
             console.print(f"[yellow]⚠[/yellow] Error processing well {well_id}: {e}")
             logger.exception(f"Failed to process well {well_id}")
-            continue
+            failed_wells.append(well_id)
+
+    return failed_wells
+
+
+def _done_marker_path(plate_path: Path, label_name: str) -> Path:
+    """Path of the sentinel file marking `label_name` as fully written for a plate."""
+    return plate_path / f".sam_trainer_{label_name}.done"
+
+
+def _is_plate_done(plate_path: Path, label_name: str) -> bool:
+    """Whether a previous run completed every well of this plate for `label_name`."""
+    return _done_marker_path(plate_path, label_name).exists()
+
+
+def _mark_plate_done(plate_path: Path, label_name: str) -> None:
+    """Write the completion sentinel (only after all wells succeeded)."""
+    _done_marker_path(plate_path, label_name).touch()
 
 
 def process_single_plate(
@@ -195,7 +220,7 @@ def process_single_plate(
     invert: bool = False,
     tile_shape: Optional[Tuple[int, int]] = None,
     halo: Optional[Tuple[int, int]] = None,
-) -> None:
+) -> bool:
     """Process a single HCS plate.
 
     Args:
@@ -208,6 +233,9 @@ def process_single_plate(
         channel: Channel to use. Integer index string or omero channel name. Default: first.
         tile_shape: Tile shape for large well/field images (see process_well).
         halo: Overlap for stitching tiles when `tile_shape` is set.
+
+    Returns:
+        True if the plate opened and every well succeeded (completion sentinel written).
     """
     console.print(f"\n[cyan]Opening plate:[/cyan] {plate_path}")
 
@@ -217,10 +245,10 @@ def process_single_plate(
     except Exception as e:
         console.print(f"[bold red]Error opening plate:[/bold red] {e}")
         logger.exception(f"Failed to open plate {plate_path}")
-        return
+        return False
 
     try:
-        process_wells(
+        failed_wells = process_wells(
             plate,
             predictor,
             segmenter,
@@ -235,10 +263,147 @@ def process_single_plate(
             tile_shape=tile_shape,
             halo=halo,
         )
-        console.print(f"[green]✓[/green] Plate complete: {plate_path}")
     except Exception as e:
         console.print(f"[bold red]Error processing plate:[/bold red] {e}")
         logger.exception(f"Failed to process plate {plate_path}")
+        return False
+
+    if failed_wells:
+        console.print(
+            f"[yellow]⚠[/yellow] Plate finished with {len(failed_wells)} failed "
+            f"well(s): {plate_path} ({', '.join(failed_wells)})"
+        )
+        return False
+
+    _mark_plate_done(plate_path, label_name)
+    console.print(f"[green]✓[/green] Plate complete: {plate_path}")
+    return True
+
+
+@lru_cache(maxsize=1)
+def _load_model_cached(
+    model_type: str,
+    device: str,
+    model_path: Optional[str],
+    use_amg: bool,
+    is_tiled: bool,
+):
+    """Load the model once per process; loky reuses workers, so each loads it once."""
+    return load_model_with_decoder(
+        model_type=model_type,
+        device=device,
+        model_path=model_path,
+        use_amg=use_amg,
+        is_tiled=is_tiled,
+    )
+
+
+def _process_plate_in_worker(
+    plate_path: Path,
+    model_kwargs: dict,
+    plate_kwargs: dict,
+    verbose: int,
+) -> tuple[Path, bool]:
+    """Joblib entry point: segment one plate in a worker process.
+
+    Takes only picklable arguments; the model is loaded lazily in the worker so it is
+    never sent across processes. Logging is reconfigured here because a fresh loky
+    worker does not inherit the parent's handlers.
+    """
+    setup_logging(verbose, console, message_prefix=f"[{plate_path.name}] ")
+    predictor, segmenter = _load_model_cached(**model_kwargs)
+    success = process_single_plate(plate_path, predictor, segmenter, **plate_kwargs)
+    return plate_path, success
+
+
+def _discover_plates(input_path: Path) -> list[Path]:
+    """Return the plate(s) to process: the input itself, or every .zarr inside it."""
+    if input_path.name.endswith(".zarr"):
+        console.print("[cyan]Mode:[/cyan] Single plate processing")
+        return [input_path]
+
+    console.print("[cyan]Mode:[/cyan] Batch processing")
+    zarr_plates = natsorted(input_path.glob("*.zarr"))
+    if not zarr_plates:
+        console.print(
+            f"[bold red]Error:[/bold red] No .zarr plates found in {input_path}"
+        )
+        raise typer.Exit(1)
+    console.print(f"[cyan]Found {len(zarr_plates)} plates to process[/cyan]")
+    return zarr_plates
+
+
+def _drop_completed_plates(plates: list[Path], label_name: str) -> list[Path]:
+    """Remove plates whose completion sentinel for `label_name` already exists."""
+    pending = [plate for plate in plates if not _is_plate_done(plate, label_name)]
+    n_skipped = len(plates) - len(pending)
+    if n_skipped:
+        console.print(
+            f"[cyan]Skipping {n_skipped} already completed plate(s) "
+            f"(--skip-existing)[/cyan]"
+        )
+    return pending
+
+
+def _run_plates_sequential(
+    plates: list[Path], model_kwargs: dict, plate_kwargs: dict
+) -> list[Path]:
+    """Segment plates one after another in this process. Returns the failed plates."""
+    segmentation_mode = "AMG" if model_kwargs["use_amg"] else "AIS (decoder-based)"
+    console.print(f"[cyan]Segmentation mode:[/cyan] {segmentation_mode}")
+    try:
+        predictor, segmenter = _load_model_cached(**model_kwargs)
+        console.print("[green]✓[/green] Model loaded successfully")
+    except Exception as e:
+        console.print(f"[bold red]Error loading model:[/bold red] {e}")
+        logger.exception("Model loading failed")
+        raise typer.Exit(1)
+
+    failed_plates = []
+    for i, plate_path in enumerate(plates, 1):
+        console.print(f"\n[cyan]Processing plate {i}/{len(plates)}[/cyan]")
+        if not process_single_plate(plate_path, predictor, segmenter, **plate_kwargs):
+            failed_plates.append(plate_path)
+    return failed_plates
+
+
+def _run_plates_parallel(
+    plates: list[Path],
+    model_kwargs: dict,
+    plate_kwargs: dict,
+    n_workers: int,
+    verbose: int,
+) -> list[Path]:
+    """Segment plates in `n_workers` processes sharing one GPU. Returns the failed plates.
+
+    The parent never loads the model (that would waste VRAM); each worker loads its own
+    copy once. Plates are independent zarr stores, so there are no write conflicts.
+    """
+    console.print(
+        f"[cyan]Parallel mode:[/cyan] {n_workers} worker processes, "
+        f"{len(plates)} plates (model loaded once per worker)"
+    )
+    # Resolve the worker via the importable module path: when this file is run as a
+    # script its functions live in __main__, which cloudpickle would serialize by value
+    # (dragging unpicklable globals such as the rich Console along).
+    worker = importlib.import_module("sam_trainer.run_inference_hcs")
+    parallel = Parallel(
+        n_jobs=n_workers, backend="loky", return_as="generator_unordered"
+    )
+    results = parallel(
+        delayed(worker._process_plate_in_worker)(
+            plate_path, model_kwargs, plate_kwargs, verbose
+        )
+        for plate_path in plates
+    )
+
+    failed_plates = []
+    for n_done, (plate_path, success) in enumerate(results, 1):
+        status = "[green]✓[/green]" if success else "[bold red]✗[/bold red]"
+        console.print(f"{status} [{n_done}/{len(plates)}] {plate_path.name}")
+        if not success:
+            failed_plates.append(plate_path)
+    return failed_plates
 
 
 def process_hcs_plates(
@@ -256,6 +421,9 @@ def process_hcs_plates(
     invert: bool = False,
     tile_shape: Optional[Tuple[int, int]] = None,
     halo: Optional[Tuple[int, int]] = None,
+    n_workers: int = 1,
+    skip_existing: bool = False,
+    verbose: int = 0,
 ) -> None:
     """Process either a single plate or all plates in a directory.
 
@@ -271,79 +439,62 @@ def process_hcs_plates(
         channel: Channel to use. Integer index string or omero channel name. Default: first.
         tile_shape: Tile shape for large well/field images (see process_well).
         halo: Overlap for stitching tiles when `tile_shape` is set.
+        n_workers: Number of plate-level worker processes sharing the device. 1 keeps
+            the sequential in-process behavior.
+        skip_existing: Skip plates already fully completed for `label_name`.
+        verbose: Verbosity forwarded to worker processes for logging setup.
+
+    Raises:
+        typer.Exit: If no plates are found, the model fails to load, or any plate failed.
     """
-    # Load model once
     if model_path is not None:
         console.print(f"[cyan]Loading model:[/cyan] {model_path}")
     else:
         console.print(
             f"[cyan]Loading model:[/cyan] pre-trained {model_type} (from cache)"
         )
-    segmentation_mode = "AMG" if use_amg else "AIS (decoder-based)"
-    console.print(f"[cyan]Segmentation mode:[/cyan] {segmentation_mode}")
-    try:
-        predictor, segmenter = load_model_with_decoder(
-            model_type=model_type,
-            device=device,
-            model_path=str(model_path) if model_path is not None else None,
-            use_amg=use_amg,
-            is_tiled=tile_shape is not None,
-        )
-        console.print("[green]✓[/green] Model loaded successfully")
-    except Exception as e:
-        console.print(f"[bold red]Error loading model:[/bold red] {e}")
-        logger.exception("Model loading failed")
-        raise typer.Exit(1)
 
-    # Determine if input is a single plate or parent directory
-    if input_path.name.endswith(".zarr"):
-        # Single plate
-        console.print("[cyan]Mode:[/cyan] Single plate processing")
-        process_single_plate(
-            input_path,
-            predictor,
-            segmenter,
-            label_name,
-            use_amg,
-            generate_kwargs,
-            channel=channel,
-            normalize=normalize,
-            normalize_lower_percentile=normalize_lower_percentile,
-            normalize_upper_percentile=normalize_upper_percentile,
-            invert=invert,
-            tile_shape=tile_shape,
-            halo=halo,
+    model_kwargs = {
+        "model_type": model_type,
+        "device": device,
+        "model_path": str(model_path) if model_path is not None else None,
+        "use_amg": use_amg,
+        "is_tiled": tile_shape is not None,
+    }
+    plate_kwargs = {
+        "label_name": label_name,
+        "use_amg": use_amg,
+        "generate_kwargs": generate_kwargs,
+        "channel": channel,
+        "normalize": normalize,
+        "normalize_lower_percentile": normalize_lower_percentile,
+        "normalize_upper_percentile": normalize_upper_percentile,
+        "invert": invert,
+        "tile_shape": tile_shape,
+        "halo": halo,
+    }
+
+    plates = _discover_plates(input_path)
+    if skip_existing:
+        plates = _drop_completed_plates(plates, label_name)
+    if not plates:
+        console.print("[green]Nothing to do: all plates already completed.[/green]")
+        return
+
+    # A pool is pointless for a single plate (and would load the model for nothing).
+    if n_workers > 1 and len(plates) > 1:
+        failed_plates = _run_plates_parallel(
+            plates, model_kwargs, plate_kwargs, min(n_workers, len(plates)), verbose
         )
     else:
-        # Parent directory - find all .zarr plates
-        console.print("[cyan]Mode:[/cyan] Batch processing")
-        zarr_plates = sorted(input_path.glob("*.zarr"))
+        failed_plates = _run_plates_sequential(plates, model_kwargs, plate_kwargs)
 
-        if not zarr_plates:
-            console.print(
-                f"[bold red]Error:[/bold red] No .zarr plates found in {input_path}"
-            )
-            raise typer.Exit(1)
-
-        console.print(f"[cyan]Found {len(zarr_plates)} plates to process[/cyan]")
-
-        for i, plate_path in enumerate(zarr_plates, 1):
-            console.print(f"\n[cyan]Processing plate {i}/{len(zarr_plates)}[/cyan]")
-            process_single_plate(
-                plate_path,
-                predictor,
-                segmenter,
-                label_name,
-                use_amg,
-                generate_kwargs,
-                channel=channel,
-                normalize=normalize,
-                normalize_lower_percentile=normalize_lower_percentile,
-                normalize_upper_percentile=normalize_upper_percentile,
-                invert=invert,
-                tile_shape=tile_shape,
-                halo=halo,
-            )
+    if failed_plates:
+        console.print(
+            f"[bold red]{len(failed_plates)} plate(s) failed:[/bold red] "
+            + ", ".join(plate.name for plate in failed_plates)
+        )
+        raise typer.Exit(1)
 
 
 @app.command()
@@ -441,6 +592,23 @@ def main(
             "(e.g. 'BF', 'DAPI'). Default: first channel."
         ),
     ),
+    n_workers: int = typer.Option(
+        1,
+        "--n-workers",
+        "-j",
+        min=1,
+        help="Number of plates segmented in parallel (separate processes sharing the "
+        "one GPU; each holds its own model copy in VRAM and RAM). Only applies to "
+        "batch mode (parent directory). Default 1 = sequential.",
+    ),
+    skip_existing: bool = typer.Option(
+        False,
+        "--skip-existing/--no-skip-existing",
+        help="Skip plates that already completed for this --label-name (completion "
+        "sentinel written after all wells succeed). Makes interrupted batch runs "
+        "resumable; do not use when re-running with changed thresholds under the same "
+        "label name.",
+    ),
     verbose: int = typer.Option(
         0, "--verbose", "-v", count=True, help="Increase logging verbosity"
     ),
@@ -533,6 +701,9 @@ def main(
         invert=invert,
         tile_shape=tile_shape_tuple,
         halo=halo_tuple,
+        n_workers=n_workers,
+        skip_existing=skip_existing,
+        verbose=verbose,
     )
 
     console.print("\n[bold green]✓ All inference complete![/bold green]")
