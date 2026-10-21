@@ -18,6 +18,11 @@
 # 2. To submit ALL plates in a parent folder (sequential processing):
 #    sbatch scripts/submit_inference_hcs.sh /path/to/parent_folder/ label_name
 #
+#    Parallel plates on the one GPU, resumable after a timeout (each worker holds its own
+#    model copy; keep --cpus-per-task >= n-workers, raise --mem if workers get OOM-killed):
+#    sbatch scripts/submit_inference_hcs.sh /path/to/parent_folder/ label_name \
+#        --n-workers 3 --skip-existing
+#
 # 3. With additional flags (e.g., AMG mode, custom thresholds):
 #    sbatch scripts/submit_inference_hcs.sh plate.zarr sam_labels --use-amg
 #    sbatch scripts/submit_inference_hcs.sh folder/ ais_relaxed --center-dist-thresh 0.6
@@ -65,6 +70,12 @@ echo "[INFO] Ensuring GPU environment is ready..."
 export MICROSAM_CACHEDIR="/tachyon/groups/scratch/gmicro/khosnikl/microsam_models_cache"
 
 pixi install -e gpu
+
+# One BLAS/OpenMP thread per process: with --n-workers > 1, unpinned native thread pools
+# would oversubscribe the allocated CPUs (also the pin used against the heap-corruption crash).
+export OMP_NUM_THREADS=${OMP_NUM_THREADS:-1}
+export MKL_NUM_THREADS=${MKL_NUM_THREADS:-1}
+export OPENBLAS_NUM_THREADS=${OPENBLAS_NUM_THREADS:-1}
 
 echo "[INFO] Using Pixi GPU environment"
 echo "[INFO] Job ID: $SLURM_JOB_ID"

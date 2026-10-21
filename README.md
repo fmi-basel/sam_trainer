@@ -229,6 +229,29 @@ pixi run python sam_trainer/run_inference_hcs.py \
     -vv
 ```
 
+Batch mode (`--input` is a folder of `.zarr` plates) can segment several plates at once on a
+single GPU and can resume after an interruption:
+
+```bash
+pixi run -e gpu python sam_trainer/run_inference_hcs.py \
+    --input /path/to/plates/ \
+    --model final_models/best.pt \
+    --label-name ais_default \
+    --n-workers 3 \
+    --skip-existing \
+    -v
+```
+
+- `--n-workers N`: N worker processes, each with its own model copy (about 3.6 GB VRAM for
+  ViT-B), pipelining one worker's IO/postprocessing with another's GPU work. Default 1
+  (sequential). Keep `--cpus-per-task >= N` and raise `--mem` accordingly.
+- `--skip-existing`: skips plates that finished completely for this `--label-name` (a
+  `.sam_trainer_<label_name>.done` file is written inside the plate after all wells succeed).
+  Do not use it when re-running with changed thresholds under the same label name.
+- Expected output: one `✓ [k/N] plate.zarr` line per finished plate, a list of failed plates
+  at the end (exit code 1 if any failed).
+- Tests: `pytest tests/test_run_inference_hcs.py` (orchestration only, no GPU/model needed).
+
 #### SLURM Submission
 
 ```bash
